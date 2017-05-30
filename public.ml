@@ -224,6 +224,86 @@ end = struct
            ; graph: public_node
            }
 
+  let maybe_uuid maybe_node =(* {{{*)
+    match maybe_node with
+    | None -> failwith "non-existent public node for uuid lookup"
+    | Some node -> PublicNode.id node
+  (* }}}*)
+  let rec update_outgoing self start_uuid current_uuid =(* {{{*)
+    printf "update_outgoing: UUID=%s" current_uuid;
+    let node' = match Map.find self current_uuid with
+    | None -> failwith @@ "non-existent node with id: " ^ current_uuid
+    | Some node' -> node'
+    in
+    match node' with
+    | StartNode x -> let self', next_key = handle_simple node' x.outgoing self start_uuid in
+      let updated_node = StartNode { x with outgoing = Map.find self' next_key } in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | EndNode x -> self, None
+    | SendNode x -> let self', next_key = handle_simple node' x.outgoing self start_uuid in
+      let updated_node = SendNode { x with outgoing = Map.find self' next_key } in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | ReceiveNode x -> let self', next_key = handle_simple node' x.outgoing self start_uuid in
+      let updated_node = ReceiveNode { x with outgoing = Map.find self' next_key } in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | XORGatewayStartNode x -> let self', successors = handle_list node' x.outgoing self start_uuid in
+      let updated_node = XORGatewayStartNode { x with outgoing = successors } in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | XORGatewayEndNode x -> let self', next_key = handle_simple node' x.outgoing self start_uuid in
+      let updated_node = XORGatewayEndNode { x with outgoing = Map.find self' next_key } in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | ANDGatewayStartNode x -> let self', successors = handle_list node' x.outgoing self start_uuid in
+      let updated_node = ANDGatewayStartNode { x with outgoing = successors } in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | ANDGatewayEndNode x -> let self', next_key = handle_simple node' x.outgoing self start_uuid in
+      let updated_node = ANDGatewayEndNode { x with outgoing = Map.find self' next_key } in
+      let self' = Map.add self' ~key:current_uuid ~data:updated_node in
+      self', None
+  (* }}}*)
+  and handle_simple node maybe_next_node self start_uuid =(* {{{*)
+    printf "IN: %s\n" @@ PublicNode.to_string node;
+    let next_key = maybe_uuid maybe_next_node in
+    printf "NEXT KEY: %s\n" next_key;
+    let self', _ = reindex' self start_uuid @@ Some next_key in
+    self', next_key
+  (* }}}*)
+  and handle_list node' next_nodes self start_uuid =(* {{{*)
+    printf "IN: %s\n" @@ PublicNode.to_string node';
+    let self', successor_uuids = List.fold ~init:(self, [])
+        ~f:(fun (state, successor_acc) successor ->
+            let next_key = PublicNode.id successor in
+            printf "NEXT KEY: %s\n" next_key;
+            let state', _ = reindex' state start_uuid @@ Some next_key in
+            state', next_key :: successor_acc
+          ) next_nodes in
+    let successors' = List.fold ~init:[] ~f:(fun state uuid ->
+        match Map.find self' uuid with
+        | None -> state
+        | Some x -> x :: state)
+        successor_uuids
+    in self', successors'
+(* }}}*)
+  and reindex' self start_uuid maybe_current_uuid =(* {{{*)
+    match maybe_current_uuid with
+    | None -> (self, Map.find self start_uuid)
+    | Some current_uuid -> update_outgoing self start_uuid current_uuid
+  (* }}}*)
+  let reindex self maybe_start_node =(* {{{*)
+
+    (* the nodes map is at this point complete, need to reindex all the
+       outgoing nodes to the fully mapped ones. Use the uuids to look the
+       correct nodes *)
+
+    let uuid = match maybe_start_node with
+      | None -> ""
+      | Some start_node -> PublicNode.id start_node
+    in
+    if uuid = ""
+       then self, None
+       else let self', _ = reindex' self uuid (Some uuid)
+         in self', Map.find self' uuid
+         (* }}}*)
+
   let is_eligable_node chor_node by_role =
     match chor_node with
     | Choreography.StartNode _ -> true
@@ -291,17 +371,19 @@ end = struct
             in
             (public_nodes', start_node'))
     in
-    match start_node with
-    | None -> failwith "No Start Node for Public Model projection"
+    let public_nodes', start_node' = reindex public_nodes start_node in
+    print_endline @@ Map.fold ~init:""
+      ~f:(fun ~key ~data state ->
+          Printf.sprintf "%skey:%s -> node:%s\n"
+            state
+            key
+            (PublicNode.to_string_deep data)) public_nodes;
+    match start_node' with
+    | None -> failwith "no public start node found"
     | Some start_node' ->
-      (* TODO: reindex graph nodes from the mapping *)
-      print_endline @@ Map.fold ~init:""
-        ~f:(fun ~key ~data state ->
-            Printf.sprintf "%skey:%s -> node:%s\n"
-              state
-              key
-              (PublicNode.to_string_deep data)) public_nodes;
-      { nodes = public_nodes
+      print_endline "THE WHOLE PUBLIC MODEL:";
+      print_endline @@ PublicNode.to_string_deep start_node';
+      { nodes = public_nodes'
       ; graph = start_node'
       }
 

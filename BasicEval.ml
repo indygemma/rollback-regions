@@ -10,6 +10,8 @@ let test () =
   print_endline @@ ChoreographyRPST.to_string rpst;
   let projection_traveler = Public.PublicNodes.project (BPMNParser.graph parsed) ~role:"Traveler"
   in Public.PublicNodes.start_node projection_traveler |> Public.PublicNode.to_string |> print_endline;
+  let projection_travelagency = Public.PublicNodes.project (BPMNParser.graph parsed) ~role:"TravelAgency"
+  in Public.PublicNodes.start_node projection_travelagency |> Public.PublicNode.to_string |> print_endline;
   (*Uuid.create ()*)
   (*|> Uuid.sexp_of_t*)
   (*|> Sexp.to_string*)

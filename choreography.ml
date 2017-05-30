@@ -204,86 +204,82 @@ end = struct
     | None -> failwith "non-existent node for uuid lookup"
     | Some node -> ChoreographyNode.id node
   (* }}}*)
+  let rec traverse' node_map node_uuid level ~init ~f =(* {{{*)
+    let node = match Map.find node_map node_uuid with
+      | None -> failwith @@ "no node for uuid: " ^ node_uuid
+      | Some x -> x
+    in
+    match node with
+    | StartNode x           -> maybe_traverse_child node_map x.outgoing level (f init level node) f
+    | EndNode x             -> f init level node
+    | InteractionNode x     -> maybe_traverse_child node_map x.outgoing level (f init level node) f
+    | XORGatewayStartNode x -> list_traverse_children node_map x.outgoing (level + 1) (f init (level + 1) node) f
+    | XORGatewayEndNode x   -> maybe_traverse_child node_map x.outgoing (level - 1) (f init level node) f
+    | ANDGatewayStartNode x -> list_traverse_children node_map x.outgoing (level + 1) (f init (level + 1) node) f
+    | ANDGatewayEndNode x   -> maybe_traverse_child node_map x.outgoing (level - 1) (f init level node) f
+  (* }}}*)
+  and maybe_traverse_child node_map node level state f =(* {{{*)
+    match node with
+      | None -> state
+      | Some next_node -> traverse' node_map (ChoreographyNode.id next_node) level ~init:state ~f:f
+  (* }}}*)
+  and list_traverse_children node_map nodes level state f =(* {{{*)
+    List.fold ~init:state ~f:(fun next_state child ->
+        traverse' node_map (ChoreographyNode.id child) level ~init:next_state ~f:f)
+      nodes
+  (* }}}*)
+  let traverse node_map node_uuid ~init ~f = traverse' node_map node_uuid 1 ~init:init ~f:f
   let rec update_outgoing self start_uuid current_uuid =(* {{{*)
     printf "update_outgoing: UUID=%s" current_uuid;
-    let node = Map.find self current_uuid in
-    let node' = match node with
+    let node' = match Map.find self current_uuid with
     | None -> failwith @@ "non-existent node with id: " ^ current_uuid
     | Some node' -> node'
     in
     match node' with
-    | StartNode x ->
-      printf "IN: %s\n" @@ StartEvent.to_string x.start_node;
-      let next_key = maybe_uuid x.outgoing in
-      printf "NEXT KEY: %s\n" next_key;
-      let self', _ = reindex' self start_uuid @@ Some next_key in
+    | StartNode x -> let self', next_key = handle_simple node' x.outgoing self start_uuid in
       let updated_node = StartNode { x with outgoing = Map.find self' next_key } in
-      let self' = Map.add self' ~key:current_uuid ~data:updated_node in
-      self', None
+      Map.add self' ~key:current_uuid ~data:updated_node, None
     | EndNode x -> self, None
-    | InteractionNode x ->
-      printf "IN: %s\n" @@ Interaction.to_string x.interaction;
-      let next_key = maybe_uuid x.outgoing in
-      printf "NEXT KEY: %s\n" next_key;
-      let self', _ = reindex' self start_uuid @@ Some next_key in
+    | InteractionNode x -> let self', next_key = handle_simple node' x.outgoing self start_uuid in
       let updated_node = InteractionNode { x with outgoing = Map.find self' next_key } in
-      let self' = Map.add self' ~key:current_uuid ~data:updated_node in
-      self', None
-    | XORGatewayStartNode x ->
-      printf "IN: %s\n" @@ XORGateway.to_string x.xor;
-      let self', successor_uuids = List.fold ~init:(self, [])
-          ~f:(fun (state, successor_acc) successor ->
-              let next_key = ChoreographyNode.id successor in
-              printf "NEXT KEY: %s\n" next_key;
-              let state', _ = reindex' state start_uuid @@ Some next_key in
-              state', next_key :: successor_acc
-            ) x.outgoing in
-      let successors' = List.fold ~init:[] ~f:(fun state uuid ->
-          match Map.find self' uuid with
-          | None -> state
-          | Some x -> x :: state)
-          successor_uuids
-      in
-      let updated_node = XORGatewayStartNode { x with outgoing = successors' } in
-      let self' = Map.add self' ~key:current_uuid ~data:updated_node in
-      self', None
-    | XORGatewayEndNode x ->
-      printf "IN: %s\n" @@ XORGateway.to_string x.xor;
-      let next_key = maybe_uuid x.outgoing in
-      printf "NEXT KEY: %s\n" next_key;
-      let self', _ = reindex' self start_uuid @@ Some next_key in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | XORGatewayStartNode x -> let self', successors = handle_list node' x.outgoing self start_uuid in
+      let updated_node = XORGatewayStartNode { x with outgoing = successors } in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | XORGatewayEndNode x -> let self', next_key = handle_simple node' x.outgoing self start_uuid in
       let updated_node = XORGatewayEndNode { x with outgoing = Map.find self' next_key } in
-      let self' = Map.add self' ~key:current_uuid ~data:updated_node in
-      self', None
-    | ANDGatewayStartNode x ->
-      printf "IN: %s\n" @@ ANDGateway.to_string x.par;
-      printf "before: %s\n" (ChoreographyNode.to_string_deep node');
-      let self', successor_uuids = List.fold ~init:(self, [])
-          ~f:(fun (state, successor_acc) successor ->
-              let next_key = ChoreographyNode.id successor in
-              printf "NEXT KEY: %s\n" next_key;
-              let state', _ = reindex' state start_uuid @@ Some next_key in
-              state', next_key :: successor_acc
-            ) x.outgoing in
-      let successors' = List.fold ~init:[] ~f:(fun state uuid ->
-          match Map.find self' uuid with
-          | None -> state
-          | Some x -> x :: state)
-          successor_uuids
-      in
-      let updated_node = ANDGatewayStartNode { x with outgoing = successors' } in
-      printf "after: %s\n" (ChoreographyNode.to_string_deep updated_node);
-      let self' = Map.add self' ~key:current_uuid ~data:updated_node in
-      self', None
-    | ANDGatewayEndNode x ->
-      printf "IN: %s\n" @@ ANDGateway.to_string x.par;
-      let next_key = maybe_uuid x.outgoing in
-      printf "NEXT KEY: %s\n" next_key;
-      let self', _ = reindex' self start_uuid @@ Some next_key in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | ANDGatewayStartNode x -> let self', successors = handle_list node' x.outgoing self start_uuid in
+      let updated_node = ANDGatewayStartNode { x with outgoing = successors } in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | ANDGatewayEndNode x -> let self', next_key = handle_simple node' x.outgoing self start_uuid in
       let updated_node = ANDGatewayEndNode { x with outgoing = Map.find self' next_key } in
       let self' = Map.add self' ~key:current_uuid ~data:updated_node in
       self', None
   (* }}}*)
+  and handle_simple node maybe_next_node self start_uuid =(* {{{*)
+    printf "IN: %s\n" @@ ChoreographyNode.to_string node;
+    let next_key = maybe_uuid maybe_next_node in
+    printf "NEXT KEY: %s\n" next_key;
+    let self', _ = reindex' self start_uuid @@ Some next_key in
+    self', next_key
+  (* }}}*)
+  and handle_list node' next_nodes self start_uuid =(* {{{*)
+    printf "IN: %s\n" @@ ChoreographyNode.to_string node';
+    let self', successor_uuids = List.fold ~init:(self, [])
+        ~f:(fun (state, successor_acc) successor ->
+            let next_key = ChoreographyNode.id successor in
+            printf "NEXT KEY: %s\n" next_key;
+            let state', _ = reindex' state start_uuid @@ Some next_key in
+            state', next_key :: successor_acc
+          ) next_nodes in
+    let successors' = List.fold ~init:[] ~f:(fun state uuid ->
+        match Map.find self' uuid with
+        | None -> state
+        | Some x -> x :: state)
+        successor_uuids
+    in self', successors'
+(* }}}*)
   and reindex' self start_uuid maybe_current_uuid =(* {{{*)
     match maybe_current_uuid with
     | None -> (self, Map.find self start_uuid)

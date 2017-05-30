@@ -206,12 +206,13 @@ end = struct
     | ANDGatewayStartNode x -> ANDGatewayStartNode { x with outgoing = successors }
     | ANDGatewayEndNode x -> assert (List.length successors = 1); ANDGatewayEndNode { x with outgoing = List.hd successors }
     (* }}}*)
-  let to_string_deep node =
+  let to_string_deep node =(* {{{*)
     traverse node ~init:"" ~f:(fun state level next_node ->
         Printf.sprintf "%s%s%s\n"
           state
-          (level_str level)
+          (level_str (level * 2))
           (to_string next_node))
+    (* }}}*)
 end
 
 module PublicNodes : sig

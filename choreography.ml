@@ -85,9 +85,8 @@ module ChoreographyNode : sig(* {{{*)
   val add_outgoing: choreography_node -> choreography_node -> choreography_node
   val empty_start: choreography_node option
   val choose_start: choreography_node -> choreography_node option -> choreography_node option
-  val to_string_deep: int -> choreography_node -> string
+  val to_string_deep: choreography_node -> string
   val to_string: choreography_node -> string
-  val maybe_to_string: int -> choreography_node option -> string
   val id: choreography_node -> string
   val traverse: choreography_node -> init:('a) -> f:('a -> int -> choreography_node -> 'a) -> 'a
   val is_start: choreography_node -> bool
@@ -112,47 +111,6 @@ end = struct
     | (false, Some right) -> if is_start right then Some right else None
     | (true, _          ) -> Some left
   (* }}}*)
-  (* TODO: rewrite to_string_deep in terms of traverse *)
-  let rec to_string_deep level node =(* {{{*)
-    match node with
-    | StartNode x -> Printf.sprintf "%s%s%s"
-                       (level_str level)
-                       (StartEvent.to_string x.start_node)
-                       ("\n" ^ maybe_to_string (level + 4) x.outgoing)
-    | EndNode x -> Printf.sprintf "%s%s"
-                     (level_str @@ level - 4)
-                     (EndEvent.to_string x.end_node)
-    | InteractionNode x -> Printf.sprintf "%s%s%s"
-                             (level_str level)
-                             (Interaction.to_string x.interaction)
-                             ("\n" ^ maybe_to_string level x.outgoing)
-    | XORGatewayStartNode x -> Printf.sprintf "%s%s%s"
-                                 (level_str level)
-                                 (XORGateway.to_string x.xor)
-                                 ("\n" ^ list_to_string (level + 4) x.outgoing)
-    | XORGatewayEndNode x -> Printf.sprintf "%s%s%s"
-                               (level_str @@ level - 4)
-                               (XORGateway.to_string x.xor)
-                               ("\n" ^ maybe_to_string (level - 4) x.outgoing)
-    | ANDGatewayStartNode x -> Printf.sprintf "%s%s%s"
-                                 (level_str level)
-                                 (ANDGateway.to_string x.par)
-                                 ("\n" ^ list_to_string (level + 4) x.outgoing)
-    | ANDGatewayEndNode x -> Printf.sprintf "%s%s%s"
-                               (level_str @@ level - 4)
-                               (ANDGateway.to_string x.par)
-                               ("\n" ^ maybe_to_string (level - 4) x.outgoing)
-  (* }}}*)
-  and maybe_to_string level node =(* {{{*)
-    match node with
-    | None -> ""
-    | Some node' -> to_string_deep level node'
-  (* }}}*)
-  and list_to_string level node_list =(* {{{*)
-    List.fold ~init:"" ~f:(fun state node ->
-        state ^ "\n" ^ (to_string_deep level node))
-      node_list
-  (* }}}*)
   let id node =(* {{{*)
     match node with
     | StartNode x -> StartEvent.id x.start_node |> from_uuid
@@ -164,7 +122,7 @@ end = struct
     | ANDGatewayEndNode x -> ANDGateway.id x.par |> from_uuid
     (* }}}*)
 
-  let to_string node =
+  let to_string node =(* {{{*)
     match node with
     | StartNode x -> (StartEvent.to_string x.start_node)
     | EndNode x -> (EndEvent.to_string x.end_node)
@@ -173,8 +131,8 @@ end = struct
     | XORGatewayEndNode x -> (XORGateway.to_string x.xor)
     | ANDGatewayStartNode x -> (ANDGateway.to_string x.par)
     | ANDGatewayEndNode x -> (ANDGateway.to_string x.par)
-
-  let rec traverse' node level ~init ~f =
+  (* }}}*)
+  let rec traverse' node level ~init ~f =(* {{{*)
     match node with
     | StartNode x           -> maybe_traverse_child x.outgoing level (f init level node) f
     | EndNode x             -> f init level node
@@ -183,18 +141,25 @@ end = struct
     | XORGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
     | ANDGatewayStartNode x -> list_traverse_children x.outgoing (level + 1) (f init (level + 1) node) f
     | ANDGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
-
-  and maybe_traverse_child node level state f =
+  (* }}}*)
+  and maybe_traverse_child node level state f =(* {{{*)
     match node with
       | None -> state
       | Some next_node -> traverse' next_node level ~init:state ~f:f
-
-  and list_traverse_children nodes level state f =
+  (* }}}*)
+  and list_traverse_children nodes level state f =(* {{{*)
     List.fold ~init:state ~f:(fun next_state child ->
         traverse' child level ~init:next_state ~f:f)
       nodes
-
+  (* }}}*)
   let traverse node ~init ~f = traverse' node 1 ~init:init ~f:f
+
+  let to_string_deep node =
+    traverse node ~init:"" ~f:(fun state level next_node ->
+        Printf.sprintf "%s%s%s\n"
+          state
+          (level_str (level * 2))
+          (to_string next_node))
 
 end
 (* }}}*)
@@ -229,7 +194,7 @@ end = struct
     | (None, None, None, None, None, None) -> failwith @@ "Non-existent node: " ^ uuid
   (* }}}*)
   let add ~uuid target self =(* {{{*)
-    printf "adding key: %s -> %s\n" uuid (ChoreographyNode.to_string_deep 0 target);
+    printf "adding key: %s -> %s\n" uuid (ChoreographyNode.to_string_deep target);
     Map.add self ~key:uuid ~data:target
   (* }}}*)
   let empty = String.Map.empty(* {{{*)
@@ -292,7 +257,7 @@ end = struct
       self', None
     | ANDGatewayStartNode x ->
       printf "IN: %s\n" @@ ANDGateway.to_string x.par;
-      printf "before: %s\n" (ChoreographyNode.to_string_deep 0 node');
+      printf "before: %s\n" (ChoreographyNode.to_string_deep node');
       let self', successor_uuids = List.fold ~init:(self, [])
           ~f:(fun (state, successor_acc) successor ->
               let next_key = ChoreographyNode.id successor in
@@ -307,7 +272,7 @@ end = struct
           successor_uuids
       in
       let updated_node = ANDGatewayStartNode { x with outgoing = successors' } in
-      printf "after: %s\n" (ChoreographyNode.to_string_deep 0 updated_node);
+      printf "after: %s\n" (ChoreographyNode.to_string_deep updated_node);
       let self' = Map.add self' ~key:current_uuid ~data:updated_node in
       self', None
     | ANDGatewayEndNode x ->
@@ -341,7 +306,7 @@ end = struct
          print_endline "lookup specific -----------------";
          let _ = match Map.find self' "sid-B2B2EF88-2BFE-4C24-A30A-5898A63EB19A" with
            | None -> print_endline "nothing..."
-           | Some node -> print_endline @@ ChoreographyNode.to_string_deep 0 node in
+           | Some node -> print_endline @@ ChoreographyNode.to_string_deep node in
          print_endline "lookup specific END -------------";
          result
          (* }}}*)
@@ -611,15 +576,18 @@ end = struct
                           |> ChoreographyNode.add_outgoing target_node in
         let nodes' = ChoreographyNodes.add ~uuid:target_ref target_node nodes
                      |> ChoreographyNodes.add ~uuid:source_ref source_node in
-        printf "source: %s\n" (ChoreographyNode.to_string_deep 0 source_node);
-        printf "target: %s\n" (ChoreographyNode.to_string_deep 0 target_node);
-        printf "start node: %s\n" @@ ChoreographyNode.maybe_to_string 0 @@ ChoreographyNode.choose_start source_node start_node;
+        printf "source: %s\n" (ChoreographyNode.to_string_deep source_node);
+        printf "target: %s\n" (ChoreographyNode.to_string_deep target_node);
+        let _ = match ChoreographyNode.choose_start source_node start_node with
+          | None -> printf "no start\n"
+          | Some x -> printf "%s\n" @@ ChoreographyNode.to_string x
+        in
         (nodes', ChoreographyNode.choose_start source_node start_node)
       ) (ChoreographyNodes.empty, ChoreographyNode.empty_start)
     in
     let _ = match start_node with
     | None -> print_endline "empty start node? why";
-    | Some start_node' -> print_endline @@ "there is a start node: " ^ (ChoreographyNode.to_string_deep 0 start_node')
+    | Some start_node' -> print_endline @@ "there is a start node: " ^ (ChoreographyNode.to_string_deep start_node')
     in
     ChoreographyNodes.reindex nodes start_node
   (* }}}*)
@@ -653,7 +621,7 @@ end = struct
   let to_string self =(* {{{*)
     match self.graph with
     | None -> "(empty graph)"
-    | Some start -> ChoreographyNode.to_string_deep 0 start
+    | Some start -> ChoreographyNode.to_string_deep start
     (* }}}*)
 
   let graph self = match self.graph with

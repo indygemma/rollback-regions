@@ -115,7 +115,7 @@ type public_node = StartNode of { start_node: StartEvent.t ; outgoing: public_no
                  | ANDGatewayStartNode of { par: ANDGateway.t ; outgoing: public_node list }
                  | ANDGatewayEndNode of { par: ANDGateway.t ; outgoing: public_node option }
 
-module PublicNode : sig
+module PublicNode : sig(* {{{ *)
   val id: public_node -> string
   val to_string: public_node -> string
   val to_string_deep: public_node -> string
@@ -214,8 +214,82 @@ end = struct
           (to_string next_node))
     (* }}}*)
 end
+(* }}} *)
+module PublicNodeRev : Node with type t = public_node = struct(* {{{ *)
+  type t = public_node
 
-module PublicNodes : sig
+  let rpst_class = function(* {{{ *)
+    | StartNode _           -> `start_node
+    | XORGatewayStartNode _ -> `xor_node
+    | ANDGatewayStartNode _ -> `and_node
+    | _                     -> `rest
+  (* }}} *)
+  let rpst_fragment_class = function(* {{{ *)
+    | StartNode _           -> `add_fragment
+    | EndNode _             -> `close_start_node
+    | SendNode _            -> `none
+    | ReceiveNode _         -> `none
+    | XORGatewayStartNode _ -> `add_fragment
+    | XORGatewayEndNode _   -> `close_xor_node
+    | ANDGatewayStartNode _ -> `add_fragment
+    | ANDGatewayEndNode _   -> `close_and_node
+  (* }}} *)
+  let rec traverse' node level ~init ~f =(* {{{*)
+    match node with
+    | StartNode x           -> maybe_traverse_child x.outgoing level (f init level node) f
+    | EndNode x             -> f init level node
+    | SendNode x            -> maybe_traverse_child x.outgoing level (f init level node) f
+    | ReceiveNode x         -> maybe_traverse_child x.outgoing level (f init level node) f
+    | XORGatewayStartNode x -> list_traverse_children x.outgoing (level + 1) (f init (level + 1) node) f
+    | XORGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
+    | ANDGatewayStartNode x -> list_traverse_children x.outgoing (level + 1) (f init (level + 1) node) f
+    | ANDGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
+  (* }}}*)
+  and maybe_traverse_child node level state f =(* {{{*)
+    match node with
+      | None -> state
+      | Some next_node -> traverse' next_node level ~init:state ~f:f
+  (* }}}*)
+  and list_traverse_children nodes level state f =(* {{{*)
+    List.fold ~init:state ~f:(fun next_state child ->
+        traverse' child level ~init:next_state ~f:f)
+      nodes
+  (* }}}*)
+  let traverse node ~init ~f = traverse' node 1 ~init:init ~f:f
+  let id node =(* {{{*)
+    match node with
+    | StartNode x -> StartEvent.id x.start_node |> from_uuid
+    | EndNode x -> EndEvent.id x.end_node |> from_uuid
+    | SendNode x -> SendActivity.id x.node |> from_uuid
+    | ReceiveNode x -> ReceiveActivity.id x.node |> from_uuid
+    | XORGatewayStartNode x -> XORGateway.id x.xor |> from_uuid
+    | XORGatewayEndNode x -> XORGateway.id x.xor |> from_uuid
+    | ANDGatewayStartNode x -> ANDGateway.id x.par |> from_uuid
+    | ANDGatewayEndNode x -> ANDGateway.id x.par |> from_uuid
+    (* }}}*)
+  let to_string node =(* {{{*)
+    match node with
+    | StartNode x -> (StartEvent.to_string x.start_node)
+    | EndNode x -> (EndEvent.to_string x.end_node)
+    | SendNode x -> (SendActivity.to_string x.node)
+    | ReceiveNode x -> (ReceiveActivity.to_string x.node)
+    | XORGatewayStartNode x -> (XORGateway.to_string x.xor)
+    | XORGatewayEndNode x -> (XORGateway.to_string x.xor)
+    | ANDGatewayStartNode x -> (ANDGateway.to_string x.par)
+    | ANDGatewayEndNode x -> (ANDGateway.to_string x.par)
+  (* }}}*)
+  let to_string_deep node =(* {{{ *)
+    traverse node ~init:"" ~f:(fun state level next_node ->
+        Printf.sprintf "%s%s%s\n"
+          state
+          (level_str (level * 2))
+          (to_string next_node))
+  (* }}} *)
+end
+(* }}} *)
+module PublicRPST = Make_RPST (PublicNodeRev)
+
+module PublicNodes : sig(* {{{*)
   type t
   val project: Choreography.choreography_node -> role:string -> t
   val start_node: t -> public_node
@@ -304,7 +378,7 @@ end = struct
          in self', Map.find self' uuid
          (* }}}*)
 
-  let is_eligable_node chor_node by_role =
+  let is_eligable_node chor_node by_role =(* {{{*)
     match chor_node with
     | Choreography.StartNode _ -> true
     | Choreography.EndNode _   -> true
@@ -317,8 +391,8 @@ end = struct
     | Choreography.XORGatewayEndNode _   -> true
     | Choreography.ANDGatewayStartNode _ -> true
     | Choreography.ANDGatewayEndNode _   -> true
-
-  let rec find_eligable_successors chor_node by_role =
+  (* }}}*)
+  let rec find_eligable_successors chor_node by_role =(* {{{*)
     match chor_node with
     | Choreography.StartNode x       -> maybe_find_eligable_successor x.outgoing by_role 
     | Choreography.EndNode x         -> []
@@ -327,15 +401,15 @@ end = struct
     | Choreography.XORGatewayEndNode x -> maybe_find_eligable_successor x.outgoing by_role
     | Choreography.ANDGatewayStartNode x -> collect_eligable_succesors x.outgoing by_role
     | Choreography.ANDGatewayEndNode x -> maybe_find_eligable_successor x.outgoing by_role
-
-  and maybe_find_eligable_successor maybe_chor_node by_role =
+  (* }}}*)
+  and maybe_find_eligable_successor maybe_chor_node by_role =(* {{{*)
     match maybe_chor_node with
     | None -> []
     | Some next_node -> if is_eligable_node next_node by_role
       then [(PublicNode.of_choreography_node next_node ~role:by_role)]
       else find_eligable_successors next_node by_role
-
-  and collect_eligable_succesors next_nodes by_role =
+  (* }}}*)
+  and collect_eligable_succesors next_nodes by_role =(* {{{*)
     List.fold ~init:[] ~f:(fun state next_node ->
         if is_eligable_node next_node by_role
         then
@@ -346,8 +420,8 @@ end = struct
         else find_eligable_successors next_node by_role @ state)
       next_nodes
     |> List.rev
-
-  let update_public_nodes public_nodes chor_node by_role =
+  (* }}}*)
+  let update_public_nodes public_nodes chor_node by_role =(* {{{*)
     (* build up the public node mapping here, but only if this chor_node is eligable *)
     if is_eligable_node chor_node by_role
     then
@@ -359,8 +433,8 @@ end = struct
       let public_node' = PublicNode.add_outgoing public_node successors in
       Map.add public_nodes ~key:(PublicNode.id public_node) ~data:public_node'
     else public_nodes
-
-  let project chor_node ~role =
+  (* }}}*)
+  let project chor_node ~role =(* {{{*)
     let public_nodes, start_node = Choreography.ChoreographyNode.traverse chor_node
         ~init:(String.Map.empty, None)
         ~f:(fun (public_nodes, start_node) level curr_chor_node ->
@@ -386,7 +460,8 @@ end = struct
       { nodes = public_nodes'
       ; graph = start_node'
       }
-
+  (* }}}*)
   let start_node self = self.graph
 
 end
+(* }}}*)

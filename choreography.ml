@@ -308,12 +308,6 @@ end = struct
 end
 (* }}}*)
 
-type fragment_item = { id: int
-                     ; level: int
-                     ; start_node: choreography_node
-                     ; end_node: choreography_node option
-                     }
-
 module ChoreographyNodeRev : Node with type t = choreography_node = struct(* {{{ *)
   type t = choreography_node
 
@@ -332,27 +326,15 @@ module ChoreographyNodeRev : Node with type t = choreography_node = struct(* {{{
     | ANDGatewayStartNode _ -> `add_fragment
     | ANDGatewayEndNode _   -> `close_and_node
   (* }}} *)
-  let rec traverse' node level ~init ~f =(* {{{*)
-    match node with
-    | StartNode x           -> maybe_traverse_child x.outgoing level (f init level node) f
-    | EndNode x             -> f init level node
-    | InteractionNode x     -> maybe_traverse_child x.outgoing level (f init level node) f
-    | XORGatewayStartNode x -> list_traverse_children x.outgoing (level + 1) (f init (level + 1) node) f
-    | XORGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
-    | ANDGatewayStartNode x -> list_traverse_children x.outgoing (level + 1) (f init (level + 1) node) f
-    | ANDGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
-  (* }}}*)
-  and maybe_traverse_child node level state f =(* {{{*)
-    match node with
-      | None -> state
-      | Some next_node -> traverse' next_node level ~init:state ~f:f
-  (* }}}*)
-  and list_traverse_children nodes level state f =(* {{{*)
-    List.fold ~init:state ~f:(fun next_state child ->
-        traverse' child level ~init:next_state ~f:f)
-      nodes
-  (* }}}*)
-  let traverse node ~init ~f = traverse' node 1 ~init:init ~f:f
+  let traverse_class = function(* {{{ *)
+    | StartNode x           -> `maybe_successor (x.outgoing,  0, 0)
+    | EndNode x             -> `stop
+    | InteractionNode x     -> `maybe_successor (x.outgoing,  0, 0)
+    | XORGatewayStartNode x -> `list_successors (x.outgoing,  1, 1)
+    | XORGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, 0)
+    | ANDGatewayStartNode x -> `list_successors (x.outgoing,  1, 1)
+    | ANDGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, 0)
+(* }}} *)
   let id node =(* {{{*)
     match node with
     | StartNode x -> StartEvent.id x.start_node |> from_uuid
@@ -373,16 +355,10 @@ module ChoreographyNodeRev : Node with type t = choreography_node = struct(* {{{
     | ANDGatewayStartNode x -> (ANDGateway.to_string x.par)
     | ANDGatewayEndNode x -> (ANDGateway.to_string x.par)
   (* }}}*)
-  let to_string_deep node =(* {{{ *)
-    traverse node ~init:"" ~f:(fun state level next_node ->
-        Printf.sprintf "%s%s%s\n"
-          state
-          (level_str (level * 2))
-          (to_string next_node))
-  (* }}} *)
 end
 (* }}} *)
-module ChoreographyRPST = Make_RPST (ChoreographyNodeRev)
+module ChoreographyTraverse = Make_Traversable (ChoreographyNodeRev)
+module ChoreographyRPST = Make_RPST (ChoreographyNodeRev) (ChoreographyTraverse)
 
 module BPMNParser : sig(* {{{*)
   type t

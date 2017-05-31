@@ -3,14 +3,20 @@ open Core.Std
 module type Node = sig(* {{{*)
   type t
   val to_string : t -> string
-  val to_string_deep : t -> string
   val id : t -> string
 
   val rpst_class : t -> [`start_node | `xor_node | `and_node | `rest]
   val rpst_fragment_class : t -> [`add_fragment | `close_start_node | `close_xor_node | `close_and_node | `none]
-  val traverse: t -> init:('a) -> f:('a -> int -> t -> 'a) -> 'a
+  val traverse_class : t -> [`maybe_successor of t option * int * int | `list_successors of t list * int * int | `stop]
 end
 (* }}}*)
+module type Traversable = sig(* {{{ *)
+  type node_t
+  val traverse: node_t -> init:('a) -> f:('a -> int -> node_t -> 'a) -> 'a
+  val to_string: node_t -> string
+end
+(* }}} *)
+
 module Participant : sig(* {{{*)
   type t
   val create : name:string -> id:Uuid.t -> t
@@ -119,6 +125,11 @@ end = struct
       self.name
 end(* }}}*)
 
+let to_uuid (id : string) = (String.drop_prefix id 4 |> Uuid.of_string)
+let from_uuid (uuid : Uuid.t) = "sid-" ^ (Uuid.to_string uuid)
+
+let level_str level = List.range 0 level |> List.fold ~init:"" ~f:(fun state x -> state ^ " ")
+
 module type RPST_intf = sig(* {{{ *)
   type node_t
   type fragment_t
@@ -129,7 +140,40 @@ module type RPST_intf = sig(* {{{ *)
 end
 (* }}} *)
 
-module Make_RPST (Node : Node)(* {{{ *)
+module Make_Traversable (Node : Node)(* {{{ *)
+  : Traversable with type node_t = Node.t
+= struct
+  type node_t = Node.t
+
+  let rec traverse' node level ~init ~f =(* {{{*)
+    match Node.traverse_class node with
+    | `maybe_successor (x, next_level, this_level) -> maybe_traverse_child x (level + next_level) (f init (level + this_level) node) f
+    | `stop              -> f init level node
+    | `list_successors (x, next_level, this_level) -> list_traverse_children x (level + next_level) (f init (level + this_level) node) f
+  (* }}}*)
+  and maybe_traverse_child node level state f =(* {{{*)
+    match node with
+      | None -> state
+      | Some next_node -> traverse' next_node level ~init:state ~f:f
+  (* }}}*)
+  and list_traverse_children nodes level state f =(* {{{*)
+    List.fold ~init:state ~f:(fun next_state child ->
+        traverse' child level ~init:next_state ~f:f)
+      nodes
+  (* }}}*)
+  let traverse node ~init ~f = traverse' node 1 ~init:init ~f:f
+
+  let to_string node =(* {{{ *)
+    traverse node ~init:"" ~f:(fun state level next_node ->
+        Printf.sprintf "%s%s%s\n"
+          state
+          (level_str (level * 2))
+          (Node.to_string next_node))
+  (* }}} *)
+
+end
+(* }}} *)
+module Make_RPST (Node : Node) (T : Traversable with type node_t = Node.t)(* {{{ *)
   : RPST_intf with type node_t = Node.t
 = struct
   type node_t = Node.t
@@ -159,7 +203,7 @@ module Make_RPST (Node : Node)(* {{{ *)
     fragment_insert_end_node' xs level start_node node []
   (* }}}*)
   let calculate start_node =(* {{{ *)
-    let new_state = Node.traverse start_node
+    let new_state = T.traverse start_node
       ~init:{ counter = 0
             ; frags = []
             }
@@ -205,7 +249,3 @@ module Make_RPST (Node : Node)(* {{{ *)
   (* }}} *)
 end
 (* }}} *)
-let to_uuid (id : string) = (String.drop_prefix id 4 |> Uuid.of_string)
-let from_uuid (uuid : Uuid.t) = "sid-" ^ (Uuid.to_string uuid)
-
-let level_str level = List.range 0 level |> List.fold ~init:"" ~f:(fun state x -> state ^ " ")

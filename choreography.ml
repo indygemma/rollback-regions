@@ -73,13 +73,14 @@ end = struct
       msg
 end(* }}}*)
 
-type choreography_node = StartNode of { start_node: StartEvent.t ; outgoing: choreography_node option }
-                       | EndNode of { end_node: EndEvent.t }
-                       | InteractionNode of { interaction: Interaction.t ; outgoing: choreography_node option }
-                       | XORGatewayStartNode of { xor: XORGateway.t ; outgoing: choreography_node list }
-                       | XORGatewayEndNode of { xor: XORGateway.t ; outgoing: choreography_node option }
-                       | ANDGatewayStartNode of { par: ANDGateway.t ; outgoing: choreography_node list }
-                       | ANDGatewayEndNode of { par: ANDGateway.t ; outgoing: choreography_node option }
+type choreography_node =
+    StartNode              of { start_node: StartEvent.t ; outgoing: choreography_node option }
+  | EndNode                of { end_node: EndEvent.t }
+  | InteractionNode        of { interaction: Interaction.t ; outgoing: choreography_node option }
+  | XORGatewayStartNode    of { xor: XORGateway.t ; outgoing: choreography_node list }
+  | XORGatewayEndNode      of { xor: XORGateway.t ; outgoing: choreography_node option }
+  | ANDGatewayStartNode    of { par: ANDGateway.t ; outgoing: choreography_node list }
+  | ANDGatewayEndNode      of { par: ANDGateway.t ; outgoing: choreography_node option }
 
 module ChoreographyNode : sig(* {{{*)
   val add_outgoing: choreography_node -> choreography_node -> choreography_node
@@ -227,6 +228,7 @@ end = struct
         traverse' node_map (ChoreographyNode.id child) level ~init:next_state ~f:f)
       nodes
   (* }}}*)
+  (* TODO: why is traverse defined in this module ? *)
   let traverse node_map node_uuid ~init ~f = traverse' node_map node_uuid 1 ~init:init ~f:f
   let rec update_outgoing self start_uuid current_uuid =(* {{{*)
     printf "update_outgoing: UUID=%s" current_uuid;
@@ -337,23 +339,23 @@ module ChoreographyNodeRev : Node with type t = choreography_node = struct(* {{{
 (* }}} *)
   let id node =(* {{{*)
     match node with
-    | StartNode x -> StartEvent.id x.start_node |> from_uuid
-    | EndNode x -> EndEvent.id x.end_node |> from_uuid
-    | InteractionNode x -> Interaction.id x.interaction |> from_uuid
-    | XORGatewayStartNode x -> XORGateway.id x.xor |> from_uuid
-    | XORGatewayEndNode x -> XORGateway.id x.xor |> from_uuid
-    | ANDGatewayStartNode x -> ANDGateway.id x.par |> from_uuid
-    | ANDGatewayEndNode x -> ANDGateway.id x.par |> from_uuid
+    | StartNode x           -> StartEvent.id x.start_node   |> from_uuid
+    | EndNode x             -> EndEvent.id x.end_node       |> from_uuid
+    | InteractionNode x     -> Interaction.id x.interaction |> from_uuid
+    | XORGatewayStartNode x -> XORGateway.id x.xor          |> from_uuid
+    | XORGatewayEndNode x   -> XORGateway.id x.xor          |> from_uuid
+    | ANDGatewayStartNode x -> ANDGateway.id x.par          |> from_uuid
+    | ANDGatewayEndNode x   -> ANDGateway.id x.par          |> from_uuid
     (* }}}*)
   let to_string node =(* {{{*)
     match node with
-    | StartNode x -> (StartEvent.to_string x.start_node)
-    | EndNode x -> (EndEvent.to_string x.end_node)
-    | InteractionNode x -> (Interaction.to_string x.interaction)
+    | StartNode x           -> (StartEvent.to_string x.start_node)
+    | EndNode x             -> (EndEvent.to_string x.end_node)
+    | InteractionNode x     -> (Interaction.to_string x.interaction)
     | XORGatewayStartNode x -> (XORGateway.to_string x.xor)
-    | XORGatewayEndNode x -> (XORGateway.to_string x.xor)
+    | XORGatewayEndNode x   -> (XORGateway.to_string x.xor)
     | ANDGatewayStartNode x -> (ANDGateway.to_string x.par)
-    | ANDGatewayEndNode x -> (ANDGateway.to_string x.par)
+    | ANDGatewayEndNode x   -> (ANDGateway.to_string x.par)
   (* }}}*)
 end
 (* }}} *)

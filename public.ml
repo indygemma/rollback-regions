@@ -266,6 +266,29 @@ module PublicNodeRev : Node with type t = public_node = struct(* {{{ *)
     | ANDGatewayStartNode x -> (ANDGateway.to_string x.par)
     | ANDGatewayEndNode x -> (ANDGateway.to_string x.par)
   (* }}}*)
+
+  let add_outgoing target source =(* {{{*)
+    match source with
+    | StartNode x           -> StartNode { x with outgoing = Some target }
+    | EndNode x             -> EndNode x
+    | SendNode x            -> SendNode { x with outgoing = Some target }
+    | ReceiveNode x         -> ReceiveNode { x with outgoing = Some target }
+    | XORGatewayStartNode x -> XORGatewayStartNode { x with outgoing = target :: x.outgoing }
+    | XORGatewayEndNode x   -> XORGatewayEndNode { x with outgoing = Some target }
+    | ANDGatewayStartNode x -> ANDGatewayStartNode { x with outgoing = target :: x.outgoing }
+    | ANDGatewayEndNode x   -> ANDGatewayEndNode { x with outgoing = Some target }
+  (* }}}*)
+  let empty_start = None
+  let is_start node = match node with(* {{{ *)
+    | StartNode _ -> true
+    | _ -> false
+(* }}} *)
+  let choose_start left maybe_right =(* {{{*)
+    match (is_start left, maybe_right) with
+    | (false, None      ) -> None
+    | (false, Some right) -> if is_start right then Some right else None
+    | (true, _          ) -> Some left
+  (* }}}*)
 end
 (* }}} *)
 
@@ -418,7 +441,7 @@ end = struct
     else public_nodes
   (* }}}*)
   let project chor_node ~role =(* {{{*)
-    let public_nodes, start_node = Choreography.ChoreographyNode.traverse chor_node
+    let public_nodes, start_node = Choreography.ChoreographyTraverse.traverse chor_node
         ~init:(String.Map.empty, None)
         ~f:(fun (public_nodes, start_node) level curr_chor_node ->
             let public_nodes' = update_public_nodes public_nodes curr_chor_node role in

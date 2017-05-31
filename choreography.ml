@@ -82,16 +82,54 @@ type choreography_node =
   | ANDGatewayStartNode    of { par: ANDGateway.t ; outgoing: choreography_node list }
   | ANDGatewayEndNode      of { par: ANDGateway.t ; outgoing: choreography_node option }
 
-module ChoreographyNode : sig(* {{{*)
-  val add_outgoing: choreography_node -> choreography_node -> choreography_node
-  val empty_start: choreography_node option
-  val choose_start: choreography_node -> choreography_node option -> choreography_node option
-  val to_string_deep: choreography_node -> string
-  val to_string: choreography_node -> string
-  val id: choreography_node -> string
-  val traverse: choreography_node -> init:('a) -> f:('a -> int -> choreography_node -> 'a) -> 'a
-  val is_start: choreography_node -> bool
-end = struct
+module ChoreographyNode : Node with type t = choreography_node = struct(* {{{ *)
+  type t = choreography_node
+
+  let rpst_class = function(* {{{ *)
+    | StartNode _           -> `start_node
+    | XORGatewayStartNode _ -> `xor_node
+    | ANDGatewayStartNode _ -> `and_node
+    | _                     -> `rest
+  (* }}} *)
+  let rpst_fragment_class = function(* {{{ *)
+    | StartNode _           -> `add_fragment
+    | EndNode _             -> `close_start_node
+    | InteractionNode _     -> `none
+    | XORGatewayStartNode _ -> `add_fragment
+    | XORGatewayEndNode _   -> `close_xor_node
+    | ANDGatewayStartNode _ -> `add_fragment
+    | ANDGatewayEndNode _   -> `close_and_node
+  (* }}} *)
+  let traverse_class = function(* {{{ *)
+    | StartNode x           -> `maybe_successor (x.outgoing,  0, 0)
+    | EndNode x             -> `stop
+    | InteractionNode x     -> `maybe_successor (x.outgoing,  0, 0)
+    | XORGatewayStartNode x -> `list_successors (x.outgoing,  1, 1)
+    | XORGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, 0)
+    | ANDGatewayStartNode x -> `list_successors (x.outgoing,  1, 1)
+    | ANDGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, 0)
+(* }}} *)
+  let id node =(* {{{*)
+    match node with
+    | StartNode x           -> StartEvent.id x.start_node   |> from_uuid
+    | EndNode x             -> EndEvent.id x.end_node       |> from_uuid
+    | InteractionNode x     -> Interaction.id x.interaction |> from_uuid
+    | XORGatewayStartNode x -> XORGateway.id x.xor          |> from_uuid
+    | XORGatewayEndNode x   -> XORGateway.id x.xor          |> from_uuid
+    | ANDGatewayStartNode x -> ANDGateway.id x.par          |> from_uuid
+    | ANDGatewayEndNode x   -> ANDGateway.id x.par          |> from_uuid
+    (* }}}*)
+  let to_string node =(* {{{*)
+    match node with
+    | StartNode x           -> (StartEvent.to_string x.start_node)
+    | EndNode x             -> (EndEvent.to_string x.end_node)
+    | InteractionNode x     -> (Interaction.to_string x.interaction)
+    | XORGatewayStartNode x -> (XORGateway.to_string x.xor)
+    | XORGatewayEndNode x   -> (XORGateway.to_string x.xor)
+    | ANDGatewayStartNode x -> (ANDGateway.to_string x.par)
+    | ANDGatewayEndNode x   -> (ANDGateway.to_string x.par)
+  (* }}}*)
+
   let add_outgoing target source =(* {{{*)
     match source with
     | StartNode x           -> StartNode { x with outgoing = Some target }
@@ -103,66 +141,20 @@ end = struct
     | ANDGatewayEndNode x   -> ANDGatewayEndNode { x with outgoing = Some target }
   (* }}}*)
   let empty_start = None
-  let is_start node = match node with
+  let is_start node = match node with(* {{{ *)
     | StartNode _ -> true
     | _ -> false
+(* }}} *)
   let choose_start left maybe_right =(* {{{*)
     match (is_start left, maybe_right) with
     | (false, None      ) -> None
     | (false, Some right) -> if is_start right then Some right else None
     | (true, _          ) -> Some left
   (* }}}*)
-  let id node =(* {{{*)
-    match node with
-    | StartNode x -> StartEvent.id x.start_node |> from_uuid
-    | EndNode x -> EndEvent.id x.end_node |> from_uuid
-    | InteractionNode x -> Interaction.id x.interaction |> from_uuid
-    | XORGatewayStartNode x -> XORGateway.id x.xor |> from_uuid
-    | XORGatewayEndNode x -> XORGateway.id x.xor |> from_uuid
-    | ANDGatewayStartNode x -> ANDGateway.id x.par |> from_uuid
-    | ANDGatewayEndNode x -> ANDGateway.id x.par |> from_uuid
-    (* }}}*)
-  let to_string node =(* {{{*)
-    match node with
-    | StartNode x -> (StartEvent.to_string x.start_node)
-    | EndNode x -> (EndEvent.to_string x.end_node)
-    | InteractionNode x -> (Interaction.to_string x.interaction)
-    | XORGatewayStartNode x -> (XORGateway.to_string x.xor)
-    | XORGatewayEndNode x -> (XORGateway.to_string x.xor)
-    | ANDGatewayStartNode x -> (ANDGateway.to_string x.par)
-    | ANDGatewayEndNode x -> (ANDGateway.to_string x.par)
-  (* }}}*)
-  let rec traverse' node level ~init ~f =(* {{{*)
-    match node with
-    | StartNode x           -> maybe_traverse_child x.outgoing level (f init level node) f
-    | EndNode x             -> f init level node
-    | InteractionNode x     -> maybe_traverse_child x.outgoing level (f init level node) f
-    | XORGatewayStartNode x -> list_traverse_children x.outgoing (level + 1) (f init (level + 1) node) f
-    | XORGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
-    | ANDGatewayStartNode x -> list_traverse_children x.outgoing (level + 1) (f init (level + 1) node) f
-    | ANDGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
-  (* }}}*)
-  and maybe_traverse_child node level state f =(* {{{*)
-    match node with
-      | None -> state
-      | Some next_node -> traverse' next_node level ~init:state ~f:f
-  (* }}}*)
-  and list_traverse_children nodes level state f =(* {{{*)
-    List.fold ~init:state ~f:(fun next_state child ->
-        traverse' child level ~init:next_state ~f:f)
-      nodes
-  (* }}}*)
-  let traverse node ~init ~f = traverse' node 1 ~init:init ~f:f
-
-  let to_string_deep node =
-    traverse node ~init:"" ~f:(fun state level next_node ->
-        Printf.sprintf "%s%s%s\n"
-          state
-          (level_str (level * 2))
-          (to_string next_node))
-
 end
-(* }}}*)
+(* }}} *)
+module ChoreographyTraverse = Make_Traversable (ChoreographyNode)
+module ChoreographyRPST = Make_RPST (ChoreographyNode) (ChoreographyTraverse)
 module ChoreographyNodes : sig(* {{{*)
   type t
   val lookup: uuid:string -> StartEvent.t String.Map.t -> EndEvent.t String.Map.t -> Interaction.t String.Map.t -> XORGateway.t String.Map.t -> ANDGateway.t String.Map.t -> t -> choreography_node
@@ -194,7 +186,7 @@ end = struct
     | (None, None, None, None, None, None) -> failwith @@ "Non-existent node: " ^ uuid
   (* }}}*)
   let add ~uuid target self =(* {{{*)
-    printf "adding key: %s -> %s\n" uuid (ChoreographyNode.to_string_deep target);
+    printf "adding key: %s -> %s\n" uuid (ChoreographyTraverse.to_string target);
     Map.add self ~key:uuid ~data:target
   (* }}}*)
   let empty = String.Map.empty(* {{{*)
@@ -303,64 +295,12 @@ end = struct
          print_endline "lookup specific -----------------";
          let _ = match Map.find self' "sid-B2B2EF88-2BFE-4C24-A30A-5898A63EB19A" with
            | None -> print_endline "nothing..."
-           | Some node -> print_endline @@ ChoreographyNode.to_string_deep node in
+           | Some node -> print_endline @@ ChoreographyTraverse.to_string node in
          print_endline "lookup specific END -------------";
          result
          (* }}}*)
 end
 (* }}}*)
-
-module ChoreographyNodeRev : Node with type t = choreography_node = struct(* {{{ *)
-  type t = choreography_node
-
-  let rpst_class = function(* {{{ *)
-    | StartNode _           -> `start_node
-    | XORGatewayStartNode _ -> `xor_node
-    | ANDGatewayStartNode _ -> `and_node
-    | _                     -> `rest
-  (* }}} *)
-  let rpst_fragment_class = function(* {{{ *)
-    | StartNode _           -> `add_fragment
-    | EndNode _             -> `close_start_node
-    | InteractionNode _     -> `none
-    | XORGatewayStartNode _ -> `add_fragment
-    | XORGatewayEndNode _   -> `close_xor_node
-    | ANDGatewayStartNode _ -> `add_fragment
-    | ANDGatewayEndNode _   -> `close_and_node
-  (* }}} *)
-  let traverse_class = function(* {{{ *)
-    | StartNode x           -> `maybe_successor (x.outgoing,  0, 0)
-    | EndNode x             -> `stop
-    | InteractionNode x     -> `maybe_successor (x.outgoing,  0, 0)
-    | XORGatewayStartNode x -> `list_successors (x.outgoing,  1, 1)
-    | XORGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, 0)
-    | ANDGatewayStartNode x -> `list_successors (x.outgoing,  1, 1)
-    | ANDGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, 0)
-(* }}} *)
-  let id node =(* {{{*)
-    match node with
-    | StartNode x           -> StartEvent.id x.start_node   |> from_uuid
-    | EndNode x             -> EndEvent.id x.end_node       |> from_uuid
-    | InteractionNode x     -> Interaction.id x.interaction |> from_uuid
-    | XORGatewayStartNode x -> XORGateway.id x.xor          |> from_uuid
-    | XORGatewayEndNode x   -> XORGateway.id x.xor          |> from_uuid
-    | ANDGatewayStartNode x -> ANDGateway.id x.par          |> from_uuid
-    | ANDGatewayEndNode x   -> ANDGateway.id x.par          |> from_uuid
-    (* }}}*)
-  let to_string node =(* {{{*)
-    match node with
-    | StartNode x           -> (StartEvent.to_string x.start_node)
-    | EndNode x             -> (EndEvent.to_string x.end_node)
-    | InteractionNode x     -> (Interaction.to_string x.interaction)
-    | XORGatewayStartNode x -> (XORGateway.to_string x.xor)
-    | XORGatewayEndNode x   -> (XORGateway.to_string x.xor)
-    | ANDGatewayStartNode x -> (ANDGateway.to_string x.par)
-    | ANDGatewayEndNode x   -> (ANDGateway.to_string x.par)
-  (* }}}*)
-end
-(* }}} *)
-module ChoreographyTraverse = Make_Traversable (ChoreographyNodeRev)
-module ChoreographyRPST = Make_RPST (ChoreographyNodeRev) (ChoreographyTraverse)
 
 module BPMNParser : sig(* {{{*)
   type t
@@ -521,8 +461,8 @@ end = struct
                           |> ChoreographyNode.add_outgoing target_node in
         let nodes' = ChoreographyNodes.add ~uuid:target_ref target_node nodes
                      |> ChoreographyNodes.add ~uuid:source_ref source_node in
-        printf "source: %s\n" (ChoreographyNode.to_string_deep source_node);
-        printf "target: %s\n" (ChoreographyNode.to_string_deep target_node);
+        printf "source: %s\n" (ChoreographyTraverse.to_string source_node);
+        printf "target: %s\n" (ChoreographyTraverse.to_string target_node);
         let _ = match ChoreographyNode.choose_start source_node start_node with
           | None -> printf "no start\n"
           | Some x -> printf "%s\n" @@ ChoreographyNode.to_string x
@@ -532,7 +472,7 @@ end = struct
     in
     let _ = match start_node with
     | None -> print_endline "empty start node? why";
-    | Some start_node' -> print_endline @@ "there is a start node: " ^ (ChoreographyNode.to_string_deep start_node')
+    | Some start_node' -> print_endline @@ "there is a start node: " ^ (ChoreographyTraverse.to_string start_node')
     in
     ChoreographyNodes.reindex nodes start_node
   (* }}}*)
@@ -566,7 +506,7 @@ end = struct
   let to_string self =(* {{{*)
     match self.graph with
     | None -> "(empty graph)"
-    | Some start -> ChoreographyNode.to_string_deep start
+    | Some start -> ChoreographyTraverse.to_string start
     (* }}}*)
 
   let graph self = match self.graph with

@@ -8,6 +8,11 @@ module type Node = sig(* {{{*)
   val rpst_class : t -> [`start_node | `xor_node | `and_node | `rest]
   val rpst_fragment_class : t -> [`add_fragment | `close_start_node | `close_xor_node | `close_and_node | `none]
   val traverse_class : t -> [`maybe_successor of t option * int * int | `list_successors of t list * int * int | `stop]
+
+  val add_outgoing: t -> t -> t
+  val empty_start: t option
+  val choose_start: t -> t option -> t option
+  val is_start: t -> bool
 end
 (* }}}*)
 module type Traversable = sig(* {{{ *)

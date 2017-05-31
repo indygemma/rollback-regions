@@ -132,13 +132,13 @@ module ChoreographyNode : Node with type t = choreography_node = struct(* {{{ *)
 
   let add_outgoing target source =(* {{{*)
     match source with
-    | StartNode x           -> StartNode { x with outgoing = Some target }
+    | StartNode x           -> StartNode { x with outgoing = List.hd target }
     | EndNode x             -> EndNode x
-    | InteractionNode x     -> InteractionNode { x with outgoing = Some target }
-    | XORGatewayStartNode x -> XORGatewayStartNode { x with outgoing = target :: x.outgoing }
-    | XORGatewayEndNode x   -> XORGatewayEndNode { x with outgoing = Some target }
-    | ANDGatewayStartNode x -> ANDGatewayStartNode { x with outgoing = target :: x.outgoing }
-    | ANDGatewayEndNode x   -> ANDGatewayEndNode { x with outgoing = Some target }
+    | InteractionNode x     -> InteractionNode { x with outgoing = List.hd target }
+    | XORGatewayStartNode x -> XORGatewayStartNode { x with outgoing = merge_unique x.outgoing target }
+    | XORGatewayEndNode x   -> XORGatewayEndNode { x with outgoing = List.hd target }
+    | ANDGatewayStartNode x -> ANDGatewayStartNode { x with outgoing = merge_unique x.outgoing target }
+    | ANDGatewayEndNode x   -> ANDGatewayEndNode { x with outgoing = List.hd target }
   (* }}}*)
   let empty_start = None
   let is_start node = match node with(* {{{ *)
@@ -458,7 +458,7 @@ end = struct
         printf "sequence flow: %s (%s)\n" source_ref target_ref;
         let target_node = ChoreographyNodes.lookup ~uuid:target_ref start_events end_events choreography_tasks xor_gateways and_gateways nodes in
         let source_node = ChoreographyNodes.lookup ~uuid:source_ref start_events end_events choreography_tasks xor_gateways and_gateways nodes
-                          |> ChoreographyNode.add_outgoing target_node in
+                          |> ChoreographyNode.add_outgoing [target_node] in
         let nodes' = ChoreographyNodes.add ~uuid:target_ref target_node nodes
                      |> ChoreographyNodes.add ~uuid:source_ref source_node in
         printf "source: %s\n" (ChoreographyTraverse.to_string source_node);

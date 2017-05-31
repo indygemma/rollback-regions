@@ -9,7 +9,7 @@ module type Node = sig(* {{{*)
   val rpst_fragment_class : t -> [`add_fragment | `close_start_node | `close_xor_node | `close_and_node | `none]
   val traverse_class : t -> [`maybe_successor of t option * int * int | `list_successors of t list * int * int | `stop]
 
-  val add_outgoing: t -> t -> t
+  val add_outgoing: t list -> t -> t
   val empty_start: t option
   val choose_start: t -> t option -> t option
   val is_start: t -> bool
@@ -21,7 +21,12 @@ module type Traversable = sig(* {{{ *)
   val to_string: node_t -> string
 end
 (* }}} *)
-
+module type NodeTransform = sig(* {{{ *)
+  type source_t
+  type target_t
+  val transform : source_t -> target_t
+end
+(* }}} *)
 module Participant : sig(* {{{*)
   type t
   val create : name:string -> id:Uuid.t -> t
@@ -134,6 +139,13 @@ let to_uuid (id : string) = (String.drop_prefix id 4 |> Uuid.of_string)
 let from_uuid (uuid : Uuid.t) = "sid-" ^ (Uuid.to_string uuid)
 
 let level_str level = List.range 0 level |> List.fold ~init:"" ~f:(fun state x -> state ^ " ")
+
+let merge_unique (l1 : 'a list) (l2 : 'a list) =
+  List.fold ~init:l1 ~f:(fun state x ->
+      if List.exists state ~f:(fun y -> x = y)
+      then state
+      else x :: state
+    ) l2
 
 module type RPST_intf = sig(* {{{ *)
   type node_t

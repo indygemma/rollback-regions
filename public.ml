@@ -115,107 +115,36 @@ type public_node = StartNode of { start_node: StartEvent.t ; outgoing: public_no
                  | ANDGatewayStartNode of { par: ANDGateway.t ; outgoing: public_node list }
                  | ANDGatewayEndNode of { par: ANDGateway.t ; outgoing: public_node option }
 
-module PublicNode : sig(* {{{ *)
-  val id: public_node -> string
-  val to_string: public_node -> string
-  val to_string_deep: public_node -> string
-  val of_choreography_node: Choreography.choreography_node -> role:string -> public_node
-  val traverse: public_node -> init:'a -> f:('a -> int -> public_node -> 'a) -> 'a
-  val add_outgoing: public_node -> public_node list -> public_node
-end = struct
-  let id node =(* {{{*)
-    let uuid = match node with
-    | StartNode x           -> StartEvent.id x.start_node
-    | EndNode x             -> EndEvent.id x.end_node
-    | SendNode x            -> SendActivity.id x.node
-    | ReceiveNode x         -> ReceiveActivity.id x.node
-    | XORGatewayStartNode x -> XORGateway.id x.xor
-    | XORGatewayEndNode x   -> XORGateway.id x.xor
-    | ANDGatewayStartNode x -> ANDGateway.id x.par
-    | ANDGatewayEndNode x   -> ANDGateway.id x.par
-    in from_uuid uuid
-  (* }}}*)
-  let to_string node =(* {{{*)
-    match node with
-    | StartNode x           -> StartEvent.to_string x.start_node
-    | EndNode x             -> EndEvent.to_string x.end_node
-    | SendNode x            -> SendActivity.to_string x.node
-    | ReceiveNode x         -> ReceiveActivity.to_string x.node
-    | XORGatewayStartNode x -> XORGateway.to_string x.xor
-    | XORGatewayEndNode x   -> XORGateway.to_string x.xor
-    | ANDGatewayStartNode x -> ANDGateway.to_string x.par
-    | ANDGatewayEndNode x   -> ANDGateway.to_string x.par
-  (* }}}*)
-  let of_choreography_node node ~role =(* {{{*)
-    match node with
-    | Choreography.StartNode x -> StartNode { start_node = x.start_node
-                                            ; outgoing = None
-                                            }
-    | Choreography.EndNode x -> EndNode { end_node = x.end_node }
-    | Choreography.InteractionNode x ->
-      if role = (Choreography.Interaction.sender x.interaction |> Participant.name)
-      then SendNode { node = SendActivity.of_interaction x.interaction ~role:role
-                    ; outgoing = None
-                    }
-      else ReceiveNode { node = ReceiveActivity.of_interaction x.interaction ~role:role
-                       ; outgoing = None
-                       }
-    | Choreography.XORGatewayStartNode x -> XORGatewayStartNode { xor = x.xor
-                                                                ; outgoing = []
-                                                                }
-    | Choreography.XORGatewayEndNode x -> XORGatewayEndNode { xor = x.xor
-                                                            ; outgoing = None
-                                                            }
-    | Choreography.ANDGatewayStartNode x -> ANDGatewayStartNode { par = x.par
-                                                                ; outgoing = []
-                                                                }
-    | Choreography.ANDGatewayEndNode x -> ANDGatewayEndNode { par = x.par
-                                                            ; outgoing = None
-                                                            }
-  (* }}}*)
-  let rec traverse' node level ~init ~f =(* {{{*)
-    match node with
-    | StartNode x           -> maybe_traverse_child x.outgoing level (f init level node) f
-    | EndNode x             -> f init level node
-    | SendNode x            -> maybe_traverse_child x.outgoing level (f init level node) f
-    | ReceiveNode x         -> maybe_traverse_child x.outgoing level (f init level node) f
-    | XORGatewayStartNode x -> list_traverse_children x.outgoing (level + 1) (f init (level + 1) node) f
-    | XORGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
-    | ANDGatewayStartNode x -> list_traverse_children x.outgoing (level + 1) (f init (level + 1) node) f
-    | ANDGatewayEndNode x   -> maybe_traverse_child x.outgoing (level - 1) (f init level node) f
+let choreography_to_public_transform node ~role =(* {{{*)
+  match node with
+  | Choreography.StartNode x -> StartNode { start_node = x.start_node
+                                          ; outgoing = None
+                                          }
+  | Choreography.EndNode x -> EndNode { end_node = x.end_node }
+  | Choreography.InteractionNode x ->
+    if role = (Choreography.Interaction.sender x.interaction |> Participant.name)
+    then SendNode { node = SendActivity.of_interaction x.interaction ~role:role
+                  ; outgoing = None
+                  }
+    else ReceiveNode { node = ReceiveActivity.of_interaction x.interaction ~role:role
+                     ; outgoing = None
+                     }
+  | Choreography.XORGatewayStartNode x -> XORGatewayStartNode { xor = x.xor
+                                                              ; outgoing = []
+                                                              }
+  | Choreography.XORGatewayEndNode x -> XORGatewayEndNode { xor = x.xor
+                                                          ; outgoing = None
+                                                          }
+  | Choreography.ANDGatewayStartNode x -> ANDGatewayStartNode { par = x.par
+                                                              ; outgoing = []
+                                                              }
+  | Choreography.ANDGatewayEndNode x -> ANDGatewayEndNode { par = x.par
+                                                          ; outgoing = None
+                                                          }
+(* }}}*)
 
-  and maybe_traverse_child node level state f =
-    match node with
-      | None -> state
-      | Some next_node -> traverse' next_node level ~init:state ~f:f
-
-  and list_traverse_children nodes level state f =
-    List.fold ~init:state ~f:(fun next_state child ->
-        traverse' child level ~init:next_state ~f:f)
-      nodes
-  (* }}}*)
-  let traverse node ~init ~f = traverse' node 1 ~init:init ~f:f
-  let add_outgoing node successors =(* {{{*)
-    match node with
-    | StartNode x -> assert (List.length successors = 1); StartNode { x with outgoing = List.hd successors }
-    | EndNode x -> EndNode x
-    | SendNode x -> assert (List.length successors = 1); SendNode { x with outgoing = List.hd successors }
-    | ReceiveNode x -> assert (List.length successors = 1); ReceiveNode { x with outgoing = List.hd successors }
-    | XORGatewayStartNode x -> XORGatewayStartNode { x with outgoing = successors }
-    | XORGatewayEndNode x -> assert (List.length successors = 1); XORGatewayEndNode { x with outgoing = List.hd successors }
-    | ANDGatewayStartNode x -> ANDGatewayStartNode { x with outgoing = successors }
-    | ANDGatewayEndNode x -> assert (List.length successors = 1); ANDGatewayEndNode { x with outgoing = List.hd successors }
-    (* }}}*)
-  let to_string_deep node =(* {{{*)
-    traverse node ~init:"" ~f:(fun state level next_node ->
-        Printf.sprintf "%s%s%s\n"
-          state
-          (level_str (level * 2))
-          (to_string next_node))
-    (* }}}*)
-end
 (* }}} *)
-module PublicNodeRev : Node with type t = public_node = struct(* {{{ *)
+module PublicNode : Node with type t = public_node = struct(* {{{ *)
   type t = public_node
 
   let rpst_class = function(* {{{ *)
@@ -269,14 +198,14 @@ module PublicNodeRev : Node with type t = public_node = struct(* {{{ *)
 
   let add_outgoing target source =(* {{{*)
     match source with
-    | StartNode x           -> StartNode { x with outgoing = Some target }
+    | StartNode x           -> StartNode { x with outgoing = List.hd target }
     | EndNode x             -> EndNode x
-    | SendNode x            -> SendNode { x with outgoing = Some target }
-    | ReceiveNode x         -> ReceiveNode { x with outgoing = Some target }
-    | XORGatewayStartNode x -> XORGatewayStartNode { x with outgoing = target :: x.outgoing }
-    | XORGatewayEndNode x   -> XORGatewayEndNode { x with outgoing = Some target }
-    | ANDGatewayStartNode x -> ANDGatewayStartNode { x with outgoing = target :: x.outgoing }
-    | ANDGatewayEndNode x   -> ANDGatewayEndNode { x with outgoing = Some target }
+    | SendNode x            -> SendNode { x with outgoing = List.hd target }
+    | ReceiveNode x         -> ReceiveNode { x with outgoing = List.hd target }
+    | XORGatewayStartNode x -> XORGatewayStartNode { x with outgoing = merge_unique target x.outgoing }
+    | XORGatewayEndNode x   -> XORGatewayEndNode { x with outgoing = List.hd target }
+    | ANDGatewayStartNode x -> ANDGatewayStartNode { x with outgoing = merge_unique target x.outgoing }
+    | ANDGatewayEndNode x   -> ANDGatewayEndNode { x with outgoing = List.hd target }
   (* }}}*)
   let empty_start = None
   let is_start node = match node with(* {{{ *)
@@ -292,8 +221,8 @@ module PublicNodeRev : Node with type t = public_node = struct(* {{{ *)
 end
 (* }}} *)
 
-module PublicTraverse = Make_Traversable (PublicNodeRev)
-module PublicRPST = Make_RPST (PublicNodeRev) (PublicTraverse)
+module PublicTraverse = Make_Traversable (PublicNode)
+module PublicRPST = Make_RPST (PublicNode) (PublicTraverse)
 
 module PublicNodes : sig(* {{{*)
   type t
@@ -412,14 +341,14 @@ end = struct
     match maybe_chor_node with
     | None -> []
     | Some next_node -> if is_eligable_node next_node by_role
-      then [(PublicNode.of_choreography_node next_node ~role:by_role)]
+      then [(choreography_to_public_transform next_node ~role:by_role)]
       else find_eligable_successors next_node by_role
   (* }}}*)
   and collect_eligable_succesors next_nodes by_role =(* {{{*)
     List.fold ~init:[] ~f:(fun state next_node ->
         if is_eligable_node next_node by_role
         then
-          let public_node = PublicNode.of_choreography_node next_node ~role:by_role in
+          let public_node = choreography_to_public_transform next_node ~role:by_role in
           if List.exists state ~f:(fun node -> node = public_node)
           then state
           else public_node :: state
@@ -432,11 +361,11 @@ end = struct
     if is_eligable_node chor_node by_role
     then
       let public_node = match Map.find public_nodes (Choreography.ChoreographyNode.id chor_node) with
-        | None   -> PublicNode.of_choreography_node chor_node ~role:by_role
+        | None   -> choreography_to_public_transform chor_node ~role:by_role
         | Some x -> x
       in
       let successors = find_eligable_successors chor_node by_role in
-      let public_node' = PublicNode.add_outgoing public_node successors in
+      let public_node' = PublicNode.add_outgoing successors public_node in
       Map.add public_nodes ~key:(PublicNode.id public_node) ~data:public_node'
     else public_nodes
   (* }}}*)
@@ -446,7 +375,7 @@ end = struct
         ~f:(fun (public_nodes, start_node) level curr_chor_node ->
             let public_nodes' = update_public_nodes public_nodes curr_chor_node role in
             let start_node' = if Choreography.ChoreographyNode.is_start curr_chor_node
-              then Some (PublicNode.of_choreography_node curr_chor_node ~role:role)
+              then Some (choreography_to_public_transform curr_chor_node ~role:role)
               else start_node
             in
             (public_nodes', start_node'))
@@ -457,12 +386,12 @@ end = struct
           Printf.sprintf "%skey:%s -> node:%s\n"
             state
             key
-            (PublicNode.to_string_deep data)) public_nodes;
+            (PublicTraverse.to_string data)) public_nodes;
     match start_node' with
     | None -> failwith "no public start node found"
     | Some start_node' ->
       print_endline "THE WHOLE PUBLIC MODEL:";
-      print_endline @@ PublicNode.to_string_deep start_node';
+      print_endline @@ PublicTraverse.to_string start_node';
       { nodes = public_nodes'
       ; graph = start_node'
       }

@@ -8,8 +8,10 @@ module type Node = sig(* {{{*)
   val rpst_class : t -> [`start_node | `xor_node | `and_node | `rest]
   val rpst_fragment_class : t -> [`add_fragment | `close_start_node | `close_xor_node | `close_and_node | `none]
   val traverse_class : t -> [`maybe_successor of t option * int * int | `list_successors of t list * int * int | `stop]
+  val update_node_map : t -> [`no_update | `update_single of t option | `update_multi of t list]
 
   val add_outgoing: t list -> t -> t
+  val update_outgoing: t list -> t -> t
   val empty_start: t option
   val choose_start: t -> t option -> t option
   val is_start: t -> bool
@@ -156,6 +158,15 @@ module type RPST_intf = sig(* {{{ *)
   val to_string : t -> string
 end
 (* }}} *)
+module type NodeMap = sig(* {{{ *)
+  type t
+  type node_t
+
+  val reindex: t -> node_t option -> t * node_t option
+  val add: uuid:string -> node_t -> t -> t
+  val empty: t
+end
+(* }}} *)
 
 module Make_Traversable (Node : Node)(* {{{ *)
   : Traversable with type node_t = Node.t
@@ -264,5 +275,89 @@ module Make_RPST (Node : Node) (T : Traversable with type node_t = Node.t)(* {{{
       ~f:(fun state fragment -> state ^ "\n" ^ (fragment_to_string fragment))
       state.fragments
   (* }}} *)
+end
+(* }}} *)
+module Make_NodeMap (N : Node)(* {{{ *)
+  : NodeMap with type node_t = N.t
+             and type t = N.t String.Map.t
+= struct
+
+  type node_t = N.t
+  type t = node_t String.Map.t
+
+  let maybe_uuid maybe_node =(* {{{*)
+    match maybe_node with
+    | None -> failwith "non-existent public node for uuid lookup"
+    | Some node -> N.id node
+  (* }}}*)
+  let rec update_outgoing self start_uuid current_uuid =(* {{{*)
+    printf "update_outgoing: UUID=%s" current_uuid;
+    let node' = match Map.find self current_uuid with
+    | None -> failwith @@ "non-existent node with id: " ^ current_uuid
+    | Some node' -> node'
+    in
+    match N.update_node_map node' with
+    | `no_update -> self, None
+    | `update_single x ->
+      let self', next_key = handle_simple node' x self start_uuid in
+      let outgoing = match Map.find self' next_key with
+        | None -> []
+        | Some outgoing -> [outgoing]
+      in
+      let updated_node = N.update_outgoing outgoing node' in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+    | `update_multi x -> let self', successors = handle_list node' x self start_uuid in
+      let updated_node = N.update_outgoing successors node' in
+      Map.add self' ~key:current_uuid ~data:updated_node, None
+  (* }}}*)
+  and handle_simple node maybe_next_node self start_uuid =(* {{{*)
+    printf "IN: %s\n" @@ N.to_string node;
+    let next_key = maybe_uuid maybe_next_node in
+    printf "NEXT KEY: %s\n" next_key;
+    let self', _ = reindex' self start_uuid @@ Some next_key in
+    self', next_key
+  (* }}}*)
+  and handle_list node' next_nodes self start_uuid =(* {{{*)
+    printf "IN: %s\n" @@ N.to_string node';
+    let self', successor_uuids = List.fold ~init:(self, [])
+        ~f:(fun (state, successor_acc) successor ->
+            let next_key = N.id successor in
+            printf "NEXT KEY: %s\n" next_key;
+            let state', _ = reindex' state start_uuid @@ Some next_key in
+            state', next_key :: successor_acc
+          ) next_nodes in
+    let successors' = List.fold ~init:[] ~f:(fun state uuid ->
+        match Map.find self' uuid with
+        | None -> state
+        | Some x -> x :: state)
+        successor_uuids
+    in self', successors'
+(* }}}*)
+  and reindex' self start_uuid maybe_current_uuid =(* {{{*)
+    match maybe_current_uuid with
+    | None -> (self, Map.find self start_uuid)
+    | Some current_uuid -> update_outgoing self start_uuid current_uuid
+  (* }}}*)
+  let reindex self maybe_start_node =(* {{{*)
+
+    (* the nodes map is at this point complete, need to reindex all the
+       outgoing nodes to the fully mapped ones. Use the uuids to look the
+       correct nodes *)
+
+    let uuid = match maybe_start_node with
+      | None -> ""
+      | Some start_node -> N.id start_node
+    in
+    if uuid = ""
+       then self, None
+       else let self', _ = reindex' self uuid (Some uuid)
+         in self', Map.find self' uuid
+         (* }}}*)
+
+  let add ~uuid target self =(* {{{*)
+    Map.add self ~key:uuid ~data:target
+  (* }}}*)
+  let empty = String.Map.empty(* {{{*)
+  (* }}}*)
 end
 (* }}} *)

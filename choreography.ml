@@ -1,4 +1,4 @@
-open Core.Std
+open Core
 open Common
 
 (* TODO: message, participant, start event and end event all only have id and name. refactor to signature *)

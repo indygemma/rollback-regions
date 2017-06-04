@@ -1,17 +1,22 @@
-open Core.Std
+open Core
 open Common
 open Choreography
+open OUnit2
 
-let test () =
+let test test_ctxt =
   let parsed = BPMNParser.parse ~filename:"BookTripOperation.xml" in
   print_endline "======";
   print_endline @@ BPMNParser.to_string parsed;
-  printf "RPST (new module): %s\n" (ChoreographyRPST.calculate (BPMNParser.graph parsed) |> ChoreographyRPST.to_string);
+  let chor_rpst = ChoreographyRPST.calculate (BPMNParser.graph parsed) in
+  printf "RPST (new module): %s\n" (chor_rpst |> ChoreographyRPST.to_string);
+  assert_equal 5 ~printer:Int.to_string (ChoreographyRPST.fragment_count chor_rpst);
   let projection_traveler = Public.PublicNodes.project (BPMNParser.graph parsed) ~role:"Traveler"
   in Public.PublicNodes.start_node projection_traveler |> Public.PublicNode.to_string |> print_endline;
   let projection_travelagency = Public.PublicNodes.project (BPMNParser.graph parsed) ~role:"TravelAgency"
   in Public.PublicNodes.start_node projection_travelagency |> Public.PublicNode.to_string |> print_endline;
-  printf "RPST (public: TravelAgency): %s\n" (Public.PublicRPST.calculate (Public.PublicNodes.start_node projection_travelagency) |> Public.PublicRPST.to_string);
+  let ta_rpst = Public.PublicRPST.calculate (Public.PublicNodes.start_node projection_travelagency) in
+  assert_equal 5 ~printer:Int.to_string (Public.PublicRPST.fragment_count ta_rpst);
+  printf "RPST (public: TravelAgency): %s\n" (ta_rpst |> Public.PublicRPST.to_string);
   (*Uuid.create ()*)
   (*|> Uuid.sexp_of_t*)
   (*|> Sexp.to_string*)
@@ -25,4 +30,10 @@ let test () =
 
   ()
 
-let () = test ()
+let suite =
+  "suite" >:::
+  ["basic rpst test" >:: test
+  ]
+
+let () =
+  run_test_tt_main suite

@@ -1,4 +1,4 @@
-open Core.Std
+open Core
 
 module type Node = sig(* {{{*)
   type t
@@ -17,10 +17,12 @@ module type Node = sig(* {{{*)
   val is_start: t -> bool
 end
 (* }}}*)
+(* TODO: Traversable needs a BFS traversal for unique node traversing, leave out nodes that were already visited before. At all times maintain that list *)
 module type Traversable = sig(* {{{ *)
   type node_t
-  val traverse: node_t -> init:('a) -> f:('a -> int -> node_t -> 'a) -> 'a
-  val to_string: node_t -> string
+  val traverse  : node_t -> init   : ('a) -> f : ('a -> int -> node_t -> 'a) -> 'a
+  val to_string : node_t -> string
+  val bfs       : node_t -> init   : ('a) -> f : ('a -> int -> node_t -> 'a) -> 'a
 end
 (* }}} *)
 module type NodeTransform = sig(* {{{ *)
@@ -156,15 +158,17 @@ module type RPST_intf = sig(* {{{ *)
   val calculate : node_t -> t
   val fragments : t -> fragment_t list
   val to_string : t -> string
+  val fragment_count : t -> int
 end
 (* }}} *)
 module type NodeMap = sig(* {{{ *)
   type t
   type node_t
 
-  val reindex: t -> node_t option -> t * node_t option
-  val add: uuid:string -> node_t -> t -> t
-  val empty: t
+  val reindex  : t -> node_t option -> t * node_t option
+  val add      : uuid:string -> node_t -> t -> t
+  val empty    : t
+  (*val traverse : t -> node_t -> init:'a -> f:('a -> int -> node_t -> 'a) -> 'a*)
 end
 (* }}} *)
 
@@ -176,7 +180,7 @@ module Make_Traversable (Node : Node)(* {{{ *)
   let rec traverse' node level ~init ~f =(* {{{*)
     match Node.traverse_class node with
     | `maybe_successor (x, next_level, this_level) -> maybe_traverse_child x (level + next_level) (f init (level + this_level) node) f
-    | `stop              -> f init level node
+    | `stop                                        -> f init level node
     | `list_successors (x, next_level, this_level) -> list_traverse_children x (level + next_level) (f init (level + this_level) node) f
   (* }}}*)
   and maybe_traverse_child node level state f =(* {{{*)
@@ -191,8 +195,48 @@ module Make_Traversable (Node : Node)(* {{{ *)
   (* }}}*)
   let traverse node ~init ~f = traverse' node 1 ~init:init ~f:f
 
+  let exists xs x = List.exists ~f:(fun y -> y = x) xs
+
+  let rec bfs' next_nodes visited level ~init ~f =(* {{{ *)
+    match next_nodes with
+    | [] -> init
+    | (node, node_level) :: rest ->
+      let visited' = (node, node_level) :: visited in
+      match Node.traverse_class node with
+      | `maybe_successor (x, next_level, this_level) ->
+        let next_nodes' = maybe_traverse_child_bfs rest visited' x (node_level + next_level) in
+        bfs' next_nodes' visited' (node_level + next_level) ~init:(f init (node_level + this_level) node) ~f:f
+      | `stop ->
+        bfs' rest visited' level ~init:(f init node_level node) ~f:f
+      | `list_successors (x, next_level, this_level) ->
+        let next_nodes' = list_traverse_children_bfs rest visited' x (node_level + next_level) in
+        bfs' next_nodes' visited' (node_level + next_level) ~init:(f init (node_level + this_level) node) ~f:f
+  (* }}} *)
+  and maybe_traverse_child_bfs next_nodes visited node level =(* {{{ *)
+    match node with
+    | None -> next_nodes
+    | Some node' ->
+      if exists next_nodes (node', level) || exists visited (node', level)
+      then next_nodes
+      else let _ = printf "IN MAYBE ADD TO BFS LIST: %s\n" (Node.to_string node') in
+        next_nodes @ [(node', level)]
+        (*(node', level) :: next_nodes*)
+  (* }}} *)
+  and list_traverse_children_bfs next_nodes visited nodes level =(* {{{ *)
+    let _ = printf "IN LIST ADD ------ \n" in
+    let next_nodes' = List.fold ~init:[] ~f:(fun acc x ->
+        if exists next_nodes (x, level) || exists visited (x, level)
+        then acc else
+          let _ = printf "IN LIST ADD TO BFS LIST: %s\n" (Node.to_string x) in
+          acc @ [(x, level)])
+        nodes
+    in
+    next_nodes' @ next_nodes
+  (* }}} *)
+  let bfs node ~init ~f = bfs' [(node, 1)] [] 1 ~init:init ~f:f
+
   let to_string node =(* {{{ *)
-    traverse node ~init:"" ~f:(fun state level next_node ->
+    bfs node ~init:"" ~f:(fun state level next_node ->
         Printf.sprintf "%s%s%s\n"
           state
           (level_str (level * 2))
@@ -259,6 +303,7 @@ module Make_RPST (Node : Node) (T : Traversable with type node_t = Node.t)(* {{{
   { fragments = List.rev new_state.frags }
   (* }}} *)
   let fragments self = self.fragments
+  let fragment_count self = List.length self.fragments
 
   let fragment_to_string fragment = (* {{{ *)
     Printf.sprintf "id: %d, level: %d, start node: %s, end node: %s"

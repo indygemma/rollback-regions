@@ -1,4 +1,4 @@
-open Core.Std
+open Core
 open Common
 
 module SendActivity : sig(* {{{*)
@@ -168,10 +168,10 @@ module PublicNode : Node with type t = public_node = struct(* {{{ *)
     | EndNode x             -> `stop
     | SendNode x            -> `maybe_successor (x.outgoing,  0, 0)
     | ReceiveNode x         -> `maybe_successor (x.outgoing,  0, 0)
-    | XORGatewayStartNode x -> `list_successors (x.outgoing,  1, 1)
-    | XORGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, 0)
-    | ANDGatewayStartNode x -> `list_successors (x.outgoing,  1, 1)
-    | ANDGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, 0)
+    | XORGatewayStartNode x -> `list_successors (x.outgoing,  1, 0)
+    | XORGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, -1)
+    | ANDGatewayStartNode x -> `list_successors (x.outgoing,  1, 0)
+    | ANDGatewayEndNode x   -> `maybe_successor (x.outgoing, -1, -1)
   (* }}} *)
   let update_node_map = function(* {{{ *)
     | StartNode x           -> `update_single x.outgoing
@@ -247,7 +247,7 @@ module PublicTraverse = Make_Traversable (PublicNode)
 module PublicRPST = Make_RPST (PublicNode) (PublicTraverse)
 module PublicNodeMap = Make_NodeMap (PublicNode)
 
-(* TODO: refactor project function as module? *)
+(* TODO: split into two modules: 1) for rebuilding the NodeMap with the new node type and 2) projecting by role *)
 module PublicNodes : sig(* {{{*)
   type t
   val project: Choreography.choreography_node -> role:string -> t

@@ -115,7 +115,7 @@ type public_node = StartNode of { start_node: StartEvent.t ; outgoing: public_no
                  | ANDGatewayStartNode of { par: ANDGateway.t ; outgoing: public_node list }
                  | ANDGatewayEndNode of { par: ANDGateway.t ; outgoing: public_node option }
 
-let choreography_to_public_transform node ~role =(* {{{*)
+let choreography_to_public_transform ~role node =(* {{{*)
   match node with
   | Choreography.StartNode x -> StartNode { start_node = x.start_node
                                           ; outgoing = None
@@ -142,8 +142,6 @@ let choreography_to_public_transform node ~role =(* {{{*)
                                                           ; outgoing = None
                                                           }
 (* }}}*)
-
-(* }}} *)
 module PublicNode : Node with type t = public_node = struct(* {{{ *)
   type t = public_node
 
@@ -247,7 +245,6 @@ module PublicTraverse = Make_Traversable (PublicNode)
 module PublicRPST = Make_RPST (PublicNode) (PublicTraverse)
 module PublicNodeMap = Make_NodeMap (PublicNode)
 
-(* TODO: split into two modules: 1) for rebuilding the NodeMap with the new node type and 2) projecting by role *)
 module PublicNodes : sig(* {{{*)
   type t
   val project: Choreography.choreography_node -> role:string -> t

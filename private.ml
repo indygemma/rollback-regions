@@ -40,33 +40,6 @@ type private_node = StartNode of { start_node: StartEvent.t ; outgoing: private_
                   | ANDGatewayStartNode of { par: ANDGateway.t ; outgoing: private_node list }
                   | ANDGatewayEndNode of { par: ANDGateway.t ; outgoing: private_node option }
 
-let public_to_private_transform node =(* {{{*)
-  match node with
-  | Public.StartNode x -> StartNode { start_node = x.start_node
-                                    ; outgoing = None
-                                    }
-  | Public.EndNode x -> EndNode { end_node = x.end_node }
-  | Public.SendNode x -> SendNode { node = x.node
-                                  ; outgoing = None
-                                  }
-  | Public.ReceiveNode x -> ReceiveNode { node = x.node
-                                        ; outgoing = None
-                                        }
-  | Public.XORGatewayStartNode x -> XORGatewayStartNode { xor = x.xor
-                                                        ; outgoing = []
-                                                        }
-  | Public.XORGatewayEndNode x -> XORGatewayEndNode { xor = x.xor
-                                                    ; outgoing = None
-                                                    }
-  | Public.ANDGatewayStartNode x -> ANDGatewayStartNode { par = x.par
-                                                        ; outgoing = []
-                                                        }
-  | Public.ANDGatewayEndNode x -> ANDGatewayEndNode { par = x.par
-                                                    ; outgoing = None
-                                                    }
-(* }}}*)
-
-(* }}} *)
 module PrivateNode : Node with type t = private_node = struct(* {{{ *)
   type t = private_node
 
@@ -177,4 +150,103 @@ module PrivateTraverse = Make_Traversable (PrivateNode)
 module PrivateRPST = Make_RPST (PrivateNode) (PrivateTraverse)
 module PrivateNodeMap = Make_NodeMap (PrivateNode)
 
+let public_to_private_transform_node node =(* {{{*)
+  match node with
+  | Public.StartNode x -> StartNode { start_node = x.start_node
+                                    ; outgoing = None
+                                    }
+  | Public.EndNode x -> EndNode { end_node = x.end_node }
+  | Public.SendNode x -> SendNode { node = x.node
+                                  ; outgoing = None
+                                  }
+  | Public.ReceiveNode x -> ReceiveNode { node = x.node
+                                        ; outgoing = None
+                                        }
+  | Public.XORGatewayStartNode x -> XORGatewayStartNode { xor = x.xor
+                                                        ; outgoing = []
+                                                        }
+  | Public.XORGatewayEndNode x -> XORGatewayEndNode { xor = x.xor
+                                                    ; outgoing = None
+                                                    }
+  | Public.ANDGatewayStartNode x -> ANDGatewayStartNode { par = x.par
+                                                        ; outgoing = []
+                                                        }
+  | Public.ANDGatewayEndNode x -> ANDGatewayEndNode { par = x.par
+                                                    ; outgoing = None
+                                                    }
+(* }}}*)
+
 (* TODO: similar to projection function that turns all the public graph nodes to private nodes including relations *)
+module PrivateNodes : sig(* {{{*)
+  type t
+  val transform : Public.public_node -> t
+  val start_node: t -> private_node
+end = struct
+  type t = { nodes: private_node String.Map.t
+           ; graph: private_node
+           }
+
+  let rec find_successors public_node =(* {{{ *)
+    match public_node with
+    | Public.StartNode x           -> maybe_successor x.outgoing
+    | Public.EndNode x             -> []
+    | Public.SendNode x            -> maybe_successor x.outgoing
+    | Public.ReceiveNode x         -> maybe_successor x.outgoing
+    | Public.XORGatewayStartNode x -> collect_successors x.outgoing
+    | Public.XORGatewayEndNode x   -> maybe_successor x.outgoing
+    | Public.ANDGatewayStartNode x -> collect_successors x.outgoing
+    | Public.ANDGatewayEndNode x   -> maybe_successor x.outgoing
+  (* }}} *)
+  and maybe_successor = function(* {{{ *)
+    | None           -> []
+    | Some next_node -> [public_to_private_transform_node next_node]
+  (* }}} *)
+  and collect_successors next_nodes =(* {{{ *)
+    List.fold ~init:[] ~f:(fun state next_node ->
+        let private_node = public_to_private_transform_node next_node in
+        if List.exists state ~f:(fun node -> node = private_node)
+        then state
+        else private_node :: state)
+      next_nodes
+    |> List.rev
+  (* }}} *)
+  let update_private_nodes private_nodes public_node =(* {{{ *)
+    let private_node' = match Map.find private_nodes (Public.PublicNode.id public_node) with
+      | None -> public_to_private_transform_node public_node
+      | Some x -> x
+    in
+    let successors = find_successors public_node in
+    let private_node' = PrivateNode.add_outgoing successors private_node' in
+    Map.add private_nodes ~key:(Public.PublicNode.id public_node) ~data:private_node'
+  (* }}} *)
+  let transform public_node =(* {{{*)
+    let private_nodes, start_node = Public.PublicTraverse.traverse public_node
+        ~init:(String.Map.empty, None)
+        ~f:(fun (private_nodes, start_node) level curr_public_node ->
+            let private_nodes' = update_private_nodes private_nodes curr_public_node in
+            let start_node' = if Public.PublicNode.is_start curr_public_node
+              then Some (public_to_private_transform_node curr_public_node)
+              else start_node
+            in
+            (private_nodes', start_node'))
+    in
+    let private_nodes', start_node' = PrivateNodeMap.reindex private_nodes start_node in
+    print_endline @@ Map.fold ~init:""
+      ~f:(fun ~key ~data state ->
+          Printf.sprintf "%skey:%s -> node:%s\n"
+            state
+            key
+            (PrivateTraverse.to_string data)) private_nodes';
+    match start_node' with
+    | None -> failwith "no private start node found"
+    | Some start_node' ->
+      print_endline "THE WHOLE PRIVATE MODEL:";
+      print_endline @@ PrivateTraverse.to_string start_node';
+      { nodes = private_nodes'
+      ; graph = start_node'
+      }
+  (* }}}*)
+  let start_node self = self.graph
+
+end
+(* }}}*)

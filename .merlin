@@ -1,0 +1,3 @@
+PKG core ZMQ yojson ctypes lambdasoup markup oUnit
+
+B _build

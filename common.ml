@@ -236,7 +236,7 @@ module Make_Traversable (Node : Node)(* {{{ *)
   let bfs node ~init ~f = bfs' [(node, 1)] [] 1 ~init:init ~f:f
 
   let to_string node =(* {{{ *)
-    bfs node ~init:"" ~f:(fun state level next_node ->
+    traverse node ~init:"" ~f:(fun state level next_node ->
         Printf.sprintf "%s%s%s\n"
           state
           (level_str (level * 2))
@@ -314,10 +314,54 @@ module Make_RPST (Node : Node) (T : Traversable with type node_t = Node.t)(* {{{
        | None -> ""
        | Some node -> Node.to_string node)
   (* }}}*)
+  let extract_nodes fragment =
+    let node_exists xs x = List.exists xs ~f:(fun y -> x = y) in
+    T.traverse fragment.start_node
+      ~init:[]
+      ~f:(fun state level node ->
+          let x = (node, fragment.level, level) in
+          match Node.rpst_fragment_class node with
+          | `add_fragment ->
+            if not (node_exists state x) 
+            then x :: state
+            else state
+          | `close_start_node ->
+            if not (node_exists state x) 
+            then x :: state
+            else state
+          | `close_xor_node ->
+            if not (node_exists state x) 
+            then x :: state
+            else state
+          | `close_and_node ->
+            if not (node_exists state x) 
+            then x :: state
+            else state
+          | `none ->
+            if fragment.level = level
+            then x :: state
+            else state
+        ) |> List.rev
+
   let to_string state =(* {{{ *)
     List.fold
       ~init:""
-      ~f:(fun state fragment -> state ^ "\n" ^ (fragment_to_string fragment))
+      ~f:(fun state fragment ->
+          let print_nodes xs = List.fold ~init:""
+              ~f:(fun state (node, fragment_level, level) ->
+                  Printf.sprintf "%s\n\t%s (fragment level: %d) (level: %d)"
+                    state
+                    (Node.to_string node)
+                    fragment_level
+                    level
+                )
+              xs
+          in
+          Printf.sprintf "%s\n%s\n\t%s"
+            state
+            (fragment_to_string fragment)
+            (print_nodes (extract_nodes fragment))
+        )
       state.fragments
   (* }}} *)
 end
@@ -404,5 +448,82 @@ module Make_NodeMap (N : Node)(* {{{ *)
   (* }}}*)
   let empty = String.Map.empty(* {{{*)
   (* }}}*)
+end
+(* }}} *)
+
+module type NodeMapTransform = sig(* {{{ *)
+
+  type t
+  type source_t
+  type target_t
+
+  val transform :    is_eligable_node:(source_t -> bool)
+                  -> transform:(source_t -> target_t)
+                  -> get_successors:( is_eligable_node:(source_t -> bool) -> transform:(source_t -> target_t) -> source_t -> target_t list )
+                  -> source_t
+                  -> t
+  val start_node: t -> target_t
+end
+(* }}} *)
+module Make_NodeMapTransform(* {{{ *)
+    (S   : Node)
+    (ST  : Traversable with type node_t = S.t)
+    (T   : Node)
+    (TT  : Traversable with type node_t = T.t)
+    (TNM : NodeMap with type node_t = T.t
+                    and type t = T.t String.Map.t)
+  : NodeMapTransform with type source_t = S.t
+                      and type target_t = T.t
+= struct
+
+  type source_t = S.t
+  type target_t = T.t
+
+  type t = { nodes: target_t String.Map.t
+           ; graph: target_t
+           }
+
+  let update_target_nodes ~is_eligable_node ~transform ~get_successors target_nodes node =(* {{{*)
+    (* build up the public node mapping here, but only if this chor_node is eligable *)
+    if is_eligable_node node
+    then
+      let target_node = match Map.find target_nodes (S.id node) with
+        | None   -> transform node
+        | Some x -> x
+      in
+      let successors = get_successors ~is_eligable_node:is_eligable_node ~transform:transform node in
+      let target_node' = T.add_outgoing successors target_node in
+      Map.add target_nodes ~key:(T.id target_node) ~data:target_node'
+    else target_nodes
+  (* }}}*)
+  let transform ~is_eligable_node ~transform ~get_successors node =(* {{{ *)
+    let target_nodes, start_node = ST.traverse node
+        ~init:(String.Map.empty, None)
+        ~f:(fun (target_nodes, start_node) level curr_node ->
+            let target_nodes' = update_target_nodes ~is_eligable_node:is_eligable_node ~transform:transform ~get_successors:get_successors target_nodes curr_node in
+            let start_node' = if S.is_start curr_node
+              then Some (transform curr_node)
+              else start_node
+            in
+            (target_nodes', start_node'))
+    in
+    let target_nodes', start_node' = TNM.reindex target_nodes start_node in
+    print_endline @@ Map.fold ~init:""
+      ~f:(fun ~key ~data state ->
+          Printf.sprintf "%skey:%s -> node:%s\n"
+            state
+            key
+            (TT.to_string data)) target_nodes';
+    match start_node' with
+    | None -> failwith "no start node found"
+    | Some start_node' ->
+      print_endline "THE WHOLE MODEL:";
+      print_endline @@ TT.to_string start_node';
+      { nodes = target_nodes'
+      ; graph = start_node'
+      }
+  (* }}} *)
+  let start_node self = self.graph
+
 end
 (* }}} *)

@@ -10,15 +10,18 @@ let test test_ctxt =
   let chor_rpst = ChoreographyRPST.calculate (BPMNParser.graph parsed) in
   printf "RPST (new module): %s\n" (chor_rpst |> ChoreographyRPST.to_string);
   assert_equal 5 ~printer:Int.to_string (ChoreographyRPST.fragment_count chor_rpst);
-  let projection_traveler = Public.PublicNodes.project (BPMNParser.graph parsed) ~role:"Traveler" in
-  Public.PublicNodes.start_node projection_traveler |> Public.PublicNode.to_string |> print_endline;
-  let projection_travelagency = Public.PublicNodes.project (BPMNParser.graph parsed) ~role:"TravelAgency" in
-  Public.PublicNodes.start_node projection_travelagency |> Public.PublicNode.to_string |> print_endline;
-  let ta_rpst = Public.PublicRPST.calculate (Public.PublicNodes.start_node projection_travelagency) in
+  let projection_traveler = Public.graph_choreography_to_public_transform (BPMNParser.graph parsed) ~role:"Traveler" in
+  Public.ChorPublicTransform.start_node projection_traveler |> Public.PublicNode.to_string |> print_endline;
+
+  printf "Projection (TravelAgency): \n";
+  let projection_travelagency = Public.graph_choreography_to_public_transform (BPMNParser.graph parsed) ~role:"TravelAgency" in
+  Public.ChorPublicTransform.start_node projection_travelagency |> Public.PublicNode.to_string |> print_endline;
+  let ta_rpst = Public.PublicRPST.calculate (Public.ChorPublicTransform.start_node projection_travelagency) in
   assert_equal 5 ~printer:Int.to_string (Public.PublicRPST.fragment_count ta_rpst);
   printf "RPST (public: TravelAgency): %s\n" (ta_rpst |> Public.PublicRPST.to_string);
-  let travelagency_private = Private.PrivateNodes.transform (Public.PublicNodes.start_node projection_travelagency) in
-  let ta_rpst_private = Private.PrivateRPST.calculate (Private.PrivateNodes.start_node travelagency_private) in
+
+  let travelagency_private = Private.graph_public_to_private_transform (Public.ChorPublicTransform.start_node projection_travelagency) in
+  let ta_rpst_private = Private.PrivateRPST.calculate (Private.PublicPrivateTransform.start_node travelagency_private) in
   assert_equal 5 ~printer:Int.to_string (Private.PrivateRPST.fragment_count ta_rpst_private);
   printf "RPST (private: TravelAgency): %s\n" (ta_rpst_private |> Private.PrivateRPST.to_string);
 

@@ -106,42 +106,15 @@ end = struct
 
 end(* }}}*)
 
-type public_node = StartNode of { start_node: StartEvent.t ; outgoing: public_node option }
-                 | EndNode of { end_node: EndEvent.t }
-                 | SendNode of { node: SendActivity.t ; outgoing: public_node option }
-                 | ReceiveNode of { node: ReceiveActivity.t ; outgoing: public_node option }
+type public_node = StartNode           of { start_node: StartEvent.t ; outgoing: public_node option }
+                 | EndNode             of { end_node: EndEvent.t }
+                 | SendNode            of { node: SendActivity.t ; outgoing: public_node option }
+                 | ReceiveNode         of { node: ReceiveActivity.t ; outgoing: public_node option }
                  | XORGatewayStartNode of { xor: XORGateway.t ; outgoing: public_node list }
-                 | XORGatewayEndNode of { xor: XORGateway.t ; outgoing: public_node option }
+                 | XORGatewayEndNode   of { xor: XORGateway.t ; outgoing: public_node option }
                  | ANDGatewayStartNode of { par: ANDGateway.t ; outgoing: public_node list }
-                 | ANDGatewayEndNode of { par: ANDGateway.t ; outgoing: public_node option }
+                 | ANDGatewayEndNode   of { par: ANDGateway.t ; outgoing: public_node option }
 
-let choreography_to_public_transform ~role node =(* {{{*)
-  match node with
-  | Choreography.StartNode x -> StartNode { start_node = x.start_node
-                                          ; outgoing = None
-                                          }
-  | Choreography.EndNode x -> EndNode { end_node = x.end_node }
-  | Choreography.InteractionNode x ->
-    if role = (Choreography.Interaction.sender x.interaction |> Participant.name)
-    then SendNode { node = SendActivity.of_interaction x.interaction ~role:role
-                  ; outgoing = None
-                  }
-    else ReceiveNode { node = ReceiveActivity.of_interaction x.interaction ~role:role
-                     ; outgoing = None
-                     }
-  | Choreography.XORGatewayStartNode x -> XORGatewayStartNode { xor = x.xor
-                                                              ; outgoing = []
-                                                              }
-  | Choreography.XORGatewayEndNode x -> XORGatewayEndNode { xor = x.xor
-                                                          ; outgoing = None
-                                                          }
-  | Choreography.ANDGatewayStartNode x -> ANDGatewayStartNode { par = x.par
-                                                              ; outgoing = []
-                                                              }
-  | Choreography.ANDGatewayEndNode x -> ANDGatewayEndNode { par = x.par
-                                                          ; outgoing = None
-                                                          }
-(* }}}*)
 module PublicNode : Node with type t = public_node = struct(* {{{ *)
   type t = public_node
 
@@ -245,99 +218,87 @@ module PublicTraverse = Make_Traversable (PublicNode)
 module PublicRPST = Make_RPST (PublicNode) (PublicTraverse)
 module PublicNodeMap = Make_NodeMap (PublicNode)
 
-module PublicNodes : sig(* {{{*)
-  type t
-  val project: Choreography.choreography_node -> role:string -> t
-  val start_node: t -> public_node
-end = struct
-  type t = { nodes: public_node String.Map.t
-           ; graph: public_node
-           }
+module ChorPublicTransform = Make_NodeMapTransform
+    (Choreography.ChoreographyNode)
+    (Choreography.ChoreographyTraverse)
+    (PublicNode)
+    (PublicTraverse)
+    (PublicNodeMap)
 
-  let is_eligable_node chor_node by_role =(* {{{*)
-    match chor_node with
-    | Choreography.StartNode _ -> true
-    | Choreography.EndNode _   -> true
-    | Choreography.InteractionNode x ->
-      if (Choreography.Interaction.sender   x.interaction |> Participant.name) = by_role
-      || (Choreography.Interaction.receiver x.interaction |> Participant.name) = by_role
-      then true
-      else false
-    | Choreography.XORGatewayStartNode _ -> true
-    | Choreography.XORGatewayEndNode _   -> true
-    | Choreography.ANDGatewayStartNode _ -> true
-    | Choreography.ANDGatewayEndNode _   -> true
-  (* }}}*)
-  let rec find_eligable_successors chor_node by_role =(* {{{*)
-    match chor_node with
-    | Choreography.StartNode x       -> maybe_find_eligable_successor x.outgoing by_role 
-    | Choreography.EndNode x         -> []
-    | Choreography.InteractionNode x -> maybe_find_eligable_successor x.outgoing by_role
-    | Choreography.XORGatewayStartNode x -> collect_eligable_succesors x.outgoing by_role
-    | Choreography.XORGatewayEndNode x -> maybe_find_eligable_successor x.outgoing by_role
-    | Choreography.ANDGatewayStartNode x -> collect_eligable_succesors x.outgoing by_role
-    | Choreography.ANDGatewayEndNode x -> maybe_find_eligable_successor x.outgoing by_role
-  (* }}}*)
-  and maybe_find_eligable_successor maybe_chor_node by_role =(* {{{*)
-    match maybe_chor_node with
-    | None -> []
-    | Some next_node -> if is_eligable_node next_node by_role
-      then [(choreography_to_public_transform next_node ~role:by_role)]
-      else find_eligable_successors next_node by_role
-  (* }}}*)
-  and collect_eligable_succesors next_nodes by_role =(* {{{*)
-    List.fold ~init:[] ~f:(fun state next_node ->
-        if is_eligable_node next_node by_role
-        then
-          let public_node = choreography_to_public_transform next_node ~role:by_role in
-          if List.exists state ~f:(fun node -> node = public_node)
-          then state
-          else public_node :: state
-        else find_eligable_successors next_node by_role @ state)
-      next_nodes
-    |> List.rev
-  (* }}}*)
-  let update_public_nodes public_nodes chor_node by_role =(* {{{*)
-    (* build up the public node mapping here, but only if this chor_node is eligable *)
-    if is_eligable_node chor_node by_role
-    then
-      let public_node = match Map.find public_nodes (Choreography.ChoreographyNode.id chor_node) with
-        | None   -> choreography_to_public_transform chor_node ~role:by_role
-        | Some x -> x
-      in
-      let successors = find_eligable_successors chor_node by_role in
-      let public_node' = PublicNode.add_outgoing successors public_node in
-      Map.add public_nodes ~key:(PublicNode.id public_node) ~data:public_node'
-    else public_nodes
-  (* }}}*)
-  let project chor_node ~role =(* {{{*)
-    let public_nodes, start_node = Choreography.ChoreographyTraverse.traverse chor_node
-        ~init:(String.Map.empty, None)
-        ~f:(fun (public_nodes, start_node) level curr_chor_node ->
-            let public_nodes' = update_public_nodes public_nodes curr_chor_node role in
-            let start_node' = if Choreography.ChoreographyNode.is_start curr_chor_node
-              then Some (choreography_to_public_transform curr_chor_node ~role:role)
-              else start_node
-            in
-            (public_nodes', start_node'))
-    in
-    let public_nodes', start_node' = PublicNodeMap.reindex public_nodes start_node in
-    print_endline @@ Map.fold ~init:""
-      ~f:(fun ~key ~data state ->
-          Printf.sprintf "%skey:%s -> node:%s\n"
-            state
-            key
-            (PublicTraverse.to_string data)) public_nodes;
-    match start_node' with
-    | None -> failwith "no public start node found"
-    | Some start_node' ->
-      print_endline "THE WHOLE PUBLIC MODEL:";
-      print_endline @@ PublicTraverse.to_string start_node';
-      { nodes = public_nodes'
-      ; graph = start_node'
-      }
-  (* }}}*)
-  let start_node self = self.graph
-
-end
+let is_eligable_node by_role chor_node =(* {{{*)
+  match chor_node with
+  | Choreography.StartNode _ -> true
+  | Choreography.EndNode _   -> true
+  | Choreography.InteractionNode x ->
+    if (Choreography.Interaction.sender   x.interaction |> Participant.name) = by_role
+    || (Choreography.Interaction.receiver x.interaction |> Participant.name) = by_role
+    then true
+    else false
+  | Choreography.XORGatewayStartNode _ -> true
+  | Choreography.XORGatewayEndNode _   -> true
+  | Choreography.ANDGatewayStartNode _ -> true
+  | Choreography.ANDGatewayEndNode _   -> true
 (* }}}*)
+let choreography_to_public_transform ~role node =(* {{{*)
+match node with
+| Choreography.StartNode x -> StartNode { start_node = x.start_node
+                                        ; outgoing = None
+                                        }
+| Choreography.EndNode x -> EndNode { end_node = x.end_node }
+| Choreography.InteractionNode x ->
+  if role = (Choreography.Interaction.sender x.interaction |> Participant.name)
+  then SendNode { node = SendActivity.of_interaction x.interaction ~role:role
+                ; outgoing = None
+                }
+  else ReceiveNode { node = ReceiveActivity.of_interaction x.interaction ~role:role
+                   ; outgoing = None
+                   }
+| Choreography.XORGatewayStartNode x -> XORGatewayStartNode { xor = x.xor
+                                                            ; outgoing = []
+                                                            }
+| Choreography.XORGatewayEndNode x -> XORGatewayEndNode { xor = x.xor
+                                                        ; outgoing = None
+                                                        }
+| Choreography.ANDGatewayStartNode x -> ANDGatewayStartNode { par = x.par
+                                                            ; outgoing = []
+                                                            }
+| Choreography.ANDGatewayEndNode x -> ANDGatewayEndNode { par = x.par
+                                                        ; outgoing = None
+                                                        }
+(* }}}*)
+let rec find_eligable_successors by_role ~is_eligable_node ~transform node =(* {{{*)
+match node with
+| Choreography.StartNode x           -> maybe_find_eligable_successor ~is_eligable_node:is_eligable_node ~transform:transform x.outgoing by_role
+| Choreography.EndNode x             -> []
+| Choreography.InteractionNode x     -> maybe_find_eligable_successor ~is_eligable_node:is_eligable_node ~transform:transform x.outgoing by_role
+| Choreography.XORGatewayStartNode x -> collect_eligable_succesors    ~is_eligable_node:is_eligable_node ~transform:transform x.outgoing by_role
+| Choreography.XORGatewayEndNode x   -> maybe_find_eligable_successor ~is_eligable_node:is_eligable_node ~transform:transform x.outgoing by_role
+| Choreography.ANDGatewayStartNode x -> collect_eligable_succesors    ~is_eligable_node:is_eligable_node ~transform:transform x.outgoing by_role
+| Choreography.ANDGatewayEndNode x   -> maybe_find_eligable_successor ~is_eligable_node:is_eligable_node ~transform:transform x.outgoing by_role
+(* }}}*)
+and maybe_find_eligable_successor ~is_eligable_node ~transform maybe_chor_node by_role =(* {{{*)
+match maybe_chor_node with
+| None -> []
+| Some next_node -> if is_eligable_node next_node
+  then [(transform next_node)]
+  else find_eligable_successors by_role ~is_eligable_node:is_eligable_node ~transform:transform next_node
+(* }}}*)
+and collect_eligable_succesors ~is_eligable_node ~transform next_nodes by_role =(* {{{*)
+List.fold ~init:[] ~f:(fun state next_node ->
+    if is_eligable_node next_node
+    then
+      let public_node = transform next_node in
+      if List.exists state ~f:(fun node -> node = public_node)
+      then state
+      else public_node :: state
+    else find_eligable_successors by_role ~is_eligable_node:is_eligable_node ~transform:transform next_node @ state)
+  next_nodes
+|> List.rev
+(* }}}*)
+
+let graph_choreography_to_public_transform chor_node ~role =
+  ChorPublicTransform.transform
+    ~is_eligable_node:(is_eligable_node role)
+    ~transform:(choreography_to_public_transform ~role:role)
+    ~get_successors:(find_eligable_successors role)
+    chor_node

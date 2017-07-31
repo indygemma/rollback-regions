@@ -1,3 +1,18 @@
+(*
+ * Copyright (c) 2017 Conrad Indiono
+ *
+ * This program is free software: you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT ANY
+ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+ * PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program (see file COPYING). If not, see <http://www.gnu.org/licenses/>.
+ *)
 open Core
 
 module type Node = sig(* {{{*)
@@ -6,7 +21,7 @@ module type Node = sig(* {{{*)
   val id : t -> string
 
   val rpst_class : t -> [`start_node | `xor_node | `and_node | `rest]
-  val rpst_fragment_class : t -> [`add_fragment | `close_start_node | `close_xor_node | `close_and_node | `none]
+  val rpst_fragment_class : t -> [`add_fragment | `close_start_node | `close_xor_node | `close_and_node | `pub | `priv]
   val traverse_class : t -> [`maybe_successor of t option * int * int | `list_successors of t list * int * int | `stop]
   val update_node_map : t -> [`no_update | `update_single of t option | `update_multi of t list]
 
@@ -157,6 +172,9 @@ module type RPST_intf = sig(* {{{ *)
   type t
   val calculate : node_t -> t
   val fragments : t -> fragment_t list
+  val fragment_to_string: fragment_t -> string
+  val fragment_private_activity_count: fragment_t -> int
+  val extract_nodes: fragment_t -> (node_t * int * int * [`add_fragment | `pub | `priv]) list
   val to_string : t -> string
   val fragment_count : t -> int
 end
@@ -293,7 +311,8 @@ module Make_RPST (Node : Node) (T : Traversable with type node_t = Node.t)(* {{{
             }
           | `close_start_node ->
             { state with frags = fragment_insert_end_node state.frags level `start_node node }
-          | `none -> state
+          | `pub -> state
+          | `priv -> state
           | `close_xor_node ->
             { state with frags = fragment_insert_end_node state.frags level `xor_node node }
           | `close_and_node ->
@@ -314,41 +333,36 @@ module Make_RPST (Node : Node) (T : Traversable with type node_t = Node.t)(* {{{
        | None -> ""
        | Some node -> Node.to_string node)
   (* }}}*)
-  let extract_nodes fragment =
+  let extract_nodes fragment =(* {{{*)
     let node_exists xs x = List.exists xs ~f:(fun y -> x = y) in
     T.traverse fragment.start_node
       ~init:[]
       ~f:(fun state level node ->
-          let x = (node, fragment.level, level) in
           match Node.rpst_fragment_class node with
           | `add_fragment ->
-            if not (node_exists state x) 
+            let x = (node, fragment.level, level, `add_fragment) in
+            if not (node_exists state x)
             then x :: state
             else state
-          | `close_start_node ->
-            if not (node_exists state x) 
+          | `pub ->
+            let x = (node, fragment.level, level, `pub) in
+            if fragment.level = level && not (node_exists state x)
             then x :: state
             else state
-          | `close_xor_node ->
-            if not (node_exists state x) 
+          | `priv ->
+            let x = (node, fragment.level, level, `priv) in
+            if fragment.level = level && not (node_exists state x)
             then x :: state
             else state
-          | `close_and_node ->
-            if not (node_exists state x) 
-            then x :: state
-            else state
-          | `none ->
-            if fragment.level = level
-            then x :: state
-            else state
+          | _ -> state
         ) |> List.rev
-
+(* }}}*)
   let to_string state =(* {{{ *)
     List.fold
       ~init:""
       ~f:(fun state fragment ->
           let print_nodes xs = List.fold ~init:""
-              ~f:(fun state (node, fragment_level, level) ->
+              ~f:(fun state (node, fragment_level, level, typ) ->
                   Printf.sprintf "%s\n\t%s (fragment level: %d) (level: %d)"
                     state
                     (Node.to_string node)
@@ -363,6 +377,10 @@ module Make_RPST (Node : Node) (T : Traversable with type node_t = Node.t)(* {{{
             (print_nodes (extract_nodes fragment))
         )
       state.fragments
+  (* }}} *)
+  let fragment_private_activity_count fragment = (* {{{ *)
+    let nodes = List.filter ~f:(fun (_, _, _, typ) -> typ = `priv) (extract_nodes fragment) in
+    List.length nodes
   (* }}} *)
 end
 (* }}} *)
@@ -380,7 +398,7 @@ module Make_NodeMap (N : Node)(* {{{ *)
     | Some node -> N.id node
   (* }}}*)
   let rec update_outgoing self start_uuid current_uuid =(* {{{*)
-    printf "update_outgoing: UUID=%s" current_uuid;
+    (*printf "update_outgoing: UUID=%s" current_uuid;*)
     let node' = match Map.find self current_uuid with
     | None -> failwith @@ "non-existent node with id: " ^ current_uuid
     | Some node' -> node'
@@ -400,18 +418,18 @@ module Make_NodeMap (N : Node)(* {{{ *)
       Map.add self' ~key:current_uuid ~data:updated_node, None
   (* }}}*)
   and handle_simple node maybe_next_node self start_uuid =(* {{{*)
-    printf "IN: %s\n" @@ N.to_string node;
+    (*printf "IN: %s\n" @@ N.to_string node;*)
     let next_key = maybe_uuid maybe_next_node in
-    printf "NEXT KEY: %s\n" next_key;
+    (*printf "NEXT KEY: %s\n" next_key;*)
     let self', _ = reindex' self start_uuid @@ Some next_key in
     self', next_key
   (* }}}*)
   and handle_list node' next_nodes self start_uuid =(* {{{*)
-    printf "IN: %s\n" @@ N.to_string node';
+    (*printf "IN: %s\n" @@ N.to_string node';*)
     let self', successor_uuids = List.fold ~init:(self, [])
         ~f:(fun (state, successor_acc) successor ->
             let next_key = N.id successor in
-            printf "NEXT KEY: %s\n" next_key;
+            (*printf "NEXT KEY: %s\n" next_key;*)
             let state', _ = reindex' state start_uuid @@ Some next_key in
             state', next_key :: successor_acc
           ) next_nodes in
@@ -463,6 +481,7 @@ module type NodeMapTransform = sig(* {{{ *)
                   -> source_t
                   -> t
   val start_node: t -> target_t
+  val node_map: t -> target_t String.Map.t
 end
 (* }}} *)
 module Make_NodeMapTransform(* {{{ *)
@@ -508,22 +527,23 @@ module Make_NodeMapTransform(* {{{ *)
             (target_nodes', start_node'))
     in
     let target_nodes', start_node' = TNM.reindex target_nodes start_node in
-    print_endline @@ Map.fold ~init:""
-      ~f:(fun ~key ~data state ->
-          Printf.sprintf "%skey:%s -> node:%s\n"
-            state
-            key
-            (TT.to_string data)) target_nodes';
+    (*print_endline @@ Map.fold ~init:""*)
+      (*~f:(fun ~key ~data state ->*)
+          (*Printf.sprintf "%skey:%s -> node:%s\n"*)
+            (*state*)
+            (*key*)
+            (*(TT.to_string data)) target_nodes';*)
     match start_node' with
     | None -> failwith "no start node found"
     | Some start_node' ->
-      print_endline "THE WHOLE MODEL:";
-      print_endline @@ TT.to_string start_node';
+      (*print_endline "THE WHOLE MODEL:";*)
+      (*print_endline @@ TT.to_string start_node';*)
       { nodes = target_nodes'
       ; graph = start_node'
       }
   (* }}} *)
   let start_node self = self.graph
+  let node_map self = self.nodes
 
 end
 (* }}} *)

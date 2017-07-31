@@ -1,3 +1,18 @@
+(*
+ * Copyright (c) 2017 Conrad Indiono
+ *
+ * This program is free software: you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT ANY
+ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+ * PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program (see file COPYING). If not, see <http://www.gnu.org/licenses/>.
+ *)
 open Core
 open Common
 
@@ -52,9 +67,9 @@ module PrivateNode : Node with type t = private_node = struct(* {{{ *)
   let rpst_fragment_class = function(* {{{ *)
     | StartNode _           -> `add_fragment
     | EndNode _             -> `close_start_node
-    | SendNode _            -> `none
-    | ReceiveNode _         -> `none
-    | PrivateNode _         -> `none
+    | SendNode _            -> `pub
+    | ReceiveNode _         -> `pub
+    | PrivateNode _         -> `priv
     | XORGatewayStartNode _ -> `add_fragment
     | XORGatewayEndNode _   -> `close_xor_node
     | ANDGatewayStartNode _ -> `add_fragment
@@ -228,3 +243,75 @@ let graph_public_to_private_transform node =
     ~transform:public_to_private_transform_node
     ~get_successors:find_eligable_successors
     node
+
+let add_random_private_activity_to_fragment start_node role nodemap frag current_id =
+    (* create a random private activity: new uuid + name = "private {current_id}" *)
+    let new_uuid = Uuid.create () in
+    let name = Printf.sprintf "private #%d" current_id in
+    let new_node = PrivateNode { node = PrivateActivity.create new_uuid name role; outgoing = None } in
+    let nodes = PrivateRPST.extract_nodes frag in
+    let arr = Array.of_list nodes in
+    let n = Random.int (Array.length arr) in
+    let (node, _, _, typ) = Array.get arr n in
+    match PrivateNode.traverse_class node with
+    | `list_successors (succ, _, _) ->
+        (* XOR or AND *)
+        (* pick random outgoing node *)
+        let arr = Array.of_list succ in
+        let n = Random.int (Array.length arr) in
+        let picked_node = Array.get arr n in
+        printf "picked node (XOR|AND): %s\n" (PrivateNode.id picked_node);
+        let succ' = List.filter ~f:(fun x -> x <> picked_node) succ in
+        (* set picked uuid as new activity's outgoing *)
+        let new_node' = PrivateNode.add_outgoing [picked_node] new_node in
+        (* add new private activity to nodemap *)
+        let nodemap' = PrivateNodeMap.add (from_uuid new_uuid) new_node' nodemap in
+        (* replace picked uuid with the new activity's uuid *)
+        let node' = PrivateNode.add_outgoing (new_node'::succ') node in
+        let nodemap' = PrivateNodeMap.add (PrivateNode.id node) node' nodemap' in
+        (* reindex nodemap *)
+        (*printf "reindex #1 %s\n" (from_uuid new_uuid);*)
+        PrivateNodeMap.reindex nodemap' (Some start_node)
+    | `maybe_successor (Some succ, _, _) ->
+        printf "picked node: %s" (PrivateNode.id succ);
+        (* set picked uuid as new activity's outgoing *)
+        let new_node' = PrivateNode.add_outgoing [succ] new_node in
+        (* add new private activity to nodemap *)
+        let nodemap' = PrivateNodeMap.add (from_uuid new_uuid) new_node' nodemap in
+        (* replace picked uuid with the new activity's uuid *)
+        let node' = PrivateNode.add_outgoing [new_node'] node in
+        let nodemap' = PrivateNodeMap.add (PrivateNode.id node) node' nodemap' in
+        (* reindex nodemap *)
+        (*printf "reindex #2 %s\n" (from_uuid new_uuid);*)
+        PrivateNodeMap.reindex nodemap' (Some start_node)
+    | _ ->
+        nodemap, Some start_node
+
+let rec add_random_private_activity_to_fragments start_node role nodemap rpst count current_id=
+    let (private_activity_count_diffs, frag_queue) = List.fold
+        ~init:(0,[])
+        ~f:(fun (diff_total, cur_queue) f ->
+            let count' = PrivateRPST.fragment_private_activity_count f in
+            let diff = count - count' in
+            (diff_total + diff, if diff > 0 then f :: cur_queue else cur_queue))
+        (PrivateRPST.fragments rpst)
+    in
+    if private_activity_count_diffs <> 0 then
+        let f = List.hd_exn frag_queue in
+        printf "Adding to fragment: %s\n" (PrivateRPST.fragment_to_string f);
+        let nodemap', start_node' = add_random_private_activity_to_fragment start_node role nodemap f current_id in
+        match start_node' with
+        | Some sn ->
+            let rpst' = PrivateRPST.calculate sn in
+            add_random_private_activity_to_fragments sn role nodemap' rpst' count (current_id + 1)
+        | None ->
+            add_random_private_activity_to_fragments start_node role nodemap' rpst count (current_id + 1)
+    else
+        nodemap, start_node
+
+let add_random_private_activities role count target_nodes =
+    let start_node = PublicPrivateTransform.start_node target_nodes in
+    let nodemap = PublicPrivateTransform.node_map target_nodes in
+    let rpst = PrivateRPST.calculate start_node in
+    (*let _ = List.map ~f:(fun f -> printf "%s\n" (PrivateRPST.fragment_to_string f)) (PrivateRPST.fragments rpst) in*)
+    add_random_private_activity_to_fragments start_node role nodemap rpst count 0
